@@ -1,0 +1,52 @@
+name: Release
+
+# Cut a release by pushing a full semver tag, e.g.:
+#   git tag v1.2.0 && git push origin v1.2.0
+# This creates the GitHub Release (auto-generated notes) and re-points the moving major tag
+# (v1) at it, so consumers pinned to `plune-ai/eval-action@v1` get the update.
+#
+# The bare major tag (v1) does NOT match the trigger below, so moving it never re-runs this
+# workflow — no infinite loop.
+#
+# Marketplace note: the FIRST Marketplace listing is a one-time manual step (the repo's
+# Releases UI has a "Publish this Action to the GitHub Marketplace" checkbox, plus a one-time
+# Developer Agreement). Once listed, releases created here surface on the Marketplace.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write # create the release + force-update the major tag
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest --generate-notes
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest --generate-notes --title "$TAG"
+          fi
+
+      - name: Move the major tag (e.g. v1.2.0 -> v1)
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          MAJOR="${TAG%%.*}" # v1.2.0 -> v1
+          git tag -f "$MAJOR" "$TAG"
+          git push --force origin "refs/tags/$MAJOR"
