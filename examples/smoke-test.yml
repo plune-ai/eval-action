@@ -1,0 +1,51 @@
+# Smoke test for plune-ai/eval-action.
+#
+# Run this ONLY AFTER:
+#   1. @plune-ai/cli is published to npm at the version pinned in action.yml (`plune-version`), and
+#   2. the action's `v1` tag exists.
+#
+# How to use:
+#   1. In a test repository, commit a minimal plune.yaml on the default branch (main):
+#
+#        version: 1
+#        provider:
+#          type: anthropic
+#          model: claude-3-5-sonnet-latest
+#        evals:
+#          - id: smoke
+#            prompt: "Reply with the single word: hello"
+#            dataset:
+#              examples:
+#                - vars: {}
+#            assertions:
+#              - type: contains
+#                value: hello
+#
+#   2. Add this file at .github/workflows/smoke-test.yml in that repository.
+#   3. Open a pull request that changes the prompt or an assertion.
+#   4. Confirm the Action posts a sticky diff comment and the check is green.
+#
+# It runs on the mock provider (use-mock defaults to true), so it needs no API key and costs nothing.
+
+name: eval-action smoke test
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: plune-ai/eval-action@v1
+        with:
+          config: plune.yaml
+          base-ref: main
