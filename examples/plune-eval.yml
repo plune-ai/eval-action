@@ -1,0 +1,36 @@
+# Example consumer workflow for the Plune eval-diff Action.
+# Copy this into YOUR repository at .github/workflows/plune-eval.yml.
+#
+# Defaults are safe: the mock provider runs with no API key and zero cost, and a regression only
+# comments — it does not block the merge. See the README to enable a real provider or gating.
+
+name: Plune eval diff
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write # required so the action can post/update the sticky diff comment
+
+jobs:
+  plune:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the action can compare the PR against the base branch
+
+      - uses: plune-ai/eval-action@v1
+        with:
+          config: plune.yaml
+          base-ref: main
+          # use-mock: 'true'             # default — zero-cost, deterministic, no key needed
+          # fail-on-regression: 'true'   # uncomment to fail the check (block merge) on a regression
+          # comment: 'true'              # default — post/update the sticky PR comment
+          #
+          # To evaluate against a REAL provider instead of the mock, set use-mock: 'false' and pass
+          # the key as an env var from a repository secret:
+          # env:
+          #   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
