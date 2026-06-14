@@ -1,0 +1,130 @@
+name: 'Plune eval diff'
+description: 'Run Plune evals on a pull request and comment the regression diff against the base branch.'
+author: 'plune-ai'
+branding:
+  icon: 'check-circle'
+  color: 'purple'
+
+# Thin wrapper over the @plune-ai/cli binary (ADR-GA01): no eval/diff logic lives here — the steps
+# only orchestrate `plune run` + `plune diff` and post the result. Inputs/outputs are a public
+# contract: changing them is a breaking change (bump the major tag).
+inputs:
+  config:
+    description: 'Path to plune.yaml (relative to working-directory).'
+    required: false
+    default: 'plune.yaml'
+  working-directory:
+    description: 'Directory to run Plune in.'
+    required: false
+    default: '.'
+  base-ref:
+    description: 'Baseline git ref to compare the PR against.'
+    required: false
+    default: 'main'
+  use-mock:
+    description: 'Run with the built-in mock provider (no API key, zero cost). Set to "false" to call a real provider (requires a key via env/secrets).'
+    required: false
+    default: 'true'
+  fail-on-regression:
+    description: 'Fail the check when a pass→fail regression is detected. Off by default — the diff is always commented.'
+    required: false
+    default: 'false'
+  comment:
+    description: 'Post (and update in place) a sticky PR comment with the diff.'
+    required: false
+    default: 'true'
+  plune-version:
+    # TODO: must equal a PUBLISHED @plune-ai/cli version. Publish the CLI to npm first, then keep
+    # this pin in lockstep with the action's own release.
+    description: 'Version of @plune-ai/cli to install from npm. Pinned for reproducibility; tracks this action release. Consumers should also pin the action ref (e.g. @v1).'
+    required: false
+    default: '0.2.0'
+
+outputs:
+  has-regression:
+    description: 'true when at least one pass→fail regression was detected.'
+    value: ${{ steps.diff.outputs.has-regression }}
+  regressions:
+    description: 'Number of pass→fail regressions.'
+    value: ${{ steps.diff.outputs.regressions }}
+  summary:
+    description: 'One-line diff summary.'
+    value: ${{ steps.diff.outputs.summary }}
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    # Evals on the PR head (the current checkout). PLUNE_MOCK_PROVIDER=1 keeps the default run
+    # free and deterministic; a real provider key is read from env/secrets by the CLI only when
+    # use-mock is false.
+    - id: run-current
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        # Pass inputs as env, not interpolated into the script — avoids Actions expression injection.
+        PLUNE_MOCK_PROVIDER: ${{ inputs.use-mock == 'true' && '1' || '' }}
+        PLUNE_VERSION: ${{ inputs.plune-version }}
+        PLUNE_CONFIG: ${{ inputs.config }}
+      run: |
+        npx -y "@plune-ai/cli@$PLUNE_VERSION" run -c "$PLUNE_CONFIG" --format json -o "$RUNNER_TEMP/plune-current.json"
+
+    # Evals on the base ref, in a detached worktree so the PR checkout is untouched (ADR-GA02:
+    # recompute baseline in the same job).
+    - id: run-baseline
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PLUNE_MOCK_PROVIDER: ${{ inputs.use-mock == 'true' && '1' || '' }}
+        PLUNE_VERSION: ${{ inputs.plune-version }}
+        PLUNE_CONFIG: ${{ inputs.config }}
+        BASE_REF: ${{ inputs.base-ref }}
+      run: |
+        git fetch --no-tags --depth=1 origin "$BASE_REF"
+        git worktree add --detach "$RUNNER_TEMP/plune-base" FETCH_HEAD
+        ( cd "$RUNNER_TEMP/plune-base" && npx -y "@plune-ai/cli@$PLUNE_VERSION" run -c "$PLUNE_CONFIG" --format json -o "$RUNNER_TEMP/plune-baseline.json" )
+
+    # Pure diff (ADR-GA03): markdown for the comment body, json to drive the outputs + gate.
+    - id: diff
+      shell: bash
+      env:
+        PLUNE_VERSION: ${{ inputs.plune-version }}
+      run: |
+        npx -y "@plune-ai/cli@$PLUNE_VERSION" diff "$RUNNER_TEMP/plune-baseline.json" "$RUNNER_TEMP/plune-current.json" --format markdown -o "$RUNNER_TEMP/plune-diff.md"
+        npx -y "@plune-ai/cli@$PLUNE_VERSION" diff "$RUNNER_TEMP/plune-baseline.json" "$RUNNER_TEMP/plune-current.json" --format json -o "$RUNNER_TEMP/plune-diff.json"
+        node -e '
+          const fs = require("fs");
+          const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/plune-diff.json", "utf8")).summary;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `has-regression=${d.hasRegression}\nregressions=${d.regressions}\nsummary=${d.regressions} regression(s), ${d.improvements} improvement(s)\n`);
+        '
+
+    # Sticky comment via the official toolkit only (GA04). The upsert helper is a tested .mjs in
+    # this action; on a fork PR (read-only token) it skips quietly instead of failing.
+    - if: ${{ inputs.comment == 'true' }}
+      uses: actions/github-script@v7
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      with:
+        script: |
+          const fs = require('fs');
+          const body = fs.readFileSync(process.env.RUNNER_TEMP + '/plune-diff.md', 'utf8');
+          try {
+            const { upsertStickyComment } = await import(process.env.ACTION_PATH + '/scripts/upsert-comment.mjs');
+            const res = await upsertStickyComment(github, context, body);
+            core.info('plune eval-diff comment: ' + res.action + (res.reason ? ' (' + res.reason + ')' : ''));
+          } catch (err) {
+            // Comment is best-effort (ADR-GA04): a GitHub API hiccup must not fail the check — the
+            // diff and the regression gate still stand.
+            core.warning('plune eval-diff: could not post comment — ' + (err && err.message ? err.message : err));
+          }
+
+    # Opt-in gate (AC-4): a quality regression fails the check (→ branch protection) only when asked.
+    - name: Gate on regression
+      if: ${{ inputs.fail-on-regression == 'true' && steps.diff.outputs.has-regression == 'true' }}
+      shell: bash
+      run: |
+        echo "::error::Plune detected a quality regression (pass→fail) on this PR."
+        exit 1

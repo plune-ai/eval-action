@@ -1,0 +1,11 @@
+# No build step — this is a composite action. These are only here in case you add tooling.
+node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
