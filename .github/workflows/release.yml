@@ -38,7 +38,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest --generate-notes
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest 
           else
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest --generate-notes --title "$TAG"
           fi
