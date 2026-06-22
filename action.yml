@@ -37,7 +37,7 @@ inputs:
     # Pinned to a published @plune-ai/cli version; bump in lockstep with this action's release.
     description: 'Version of @plune-ai/cli to install from npm. Pinned for reproducibility; tracks this action release. Consumers should also pin the action ref (e.g. @v1).'
     required: false
-    default: '0.2.0'
+    default: '0.2.2'
 
 outputs:
   has-regression:
