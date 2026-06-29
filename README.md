@@ -81,6 +81,13 @@ branch does not turn the check red.
 | `regressions` | Number of regressions. |
 | `summary` | One-line diff summary. |
 
+## Run summary
+
+Every run writes a human-readable summary (per-eval pass/fail, cost, latency, and — when a baseline
+exists — the diff) to the [job summary](https://docs.github.com/actions/using-workflows/workflow-commands-for-github-actions#adding-a-job-summary)
+on the Actions run page. Unlike the sticky PR comment, this is always visible — including on the
+first eval PR (no baseline yet), re-runs, and `push`/scheduled runs that have no associated PR.
+
 ## Using a real provider
 
 By default the Action uses the mock provider so PRs cost nothing and stay deterministic. To
