@@ -81,17 +81,36 @@ runs:
         PLUNE_VERSION: ${{ inputs.plune-version }}
         PLUNE_CONFIG: ${{ inputs.config }}
         BASE_REF: ${{ inputs.base-ref }}
+        # Passed as env (not interpolated) so the baseline run honors working-directory in a monorepo.
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
       run: |
         git fetch --no-tags --depth=1 origin "$BASE_REF"
         git worktree add --detach "$RUNNER_TEMP/plune-base" FETCH_HEAD
-        ( cd "$RUNNER_TEMP/plune-base" && npx -y "@plune-ai/cli@$PLUNE_VERSION" run -c "$PLUNE_CONFIG" --format json -o "$RUNNER_TEMP/plune-baseline.json" )
+        # Mirror the PR-head run: cd into working-directory *inside* the base worktree, not its root.
+        BASE_DIR="$RUNNER_TEMP/plune-base/$WORKING_DIRECTORY"
+        if [ -f "$BASE_DIR/$PLUNE_CONFIG" ]; then
+          ( cd "$BASE_DIR" && npx -y "@plune-ai/cli@$PLUNE_VERSION" run -c "$PLUNE_CONFIG" --format json -o "$RUNNER_TEMP/plune-baseline.json" )
+          echo "baseline=true" >> "$GITHUB_OUTPUT"
+        else
+          # First PR to introduce evals: config doesn't exist on the base ref yet. Degrade gracefully.
+          echo "::notice::No Plune config at $PLUNE_CONFIG on base ref ($BASE_REF) — skipping baseline diff."
+          echo "baseline=false" >> "$GITHUB_OUTPUT"
+        fi
 
     # Pure diff (ADR-GA03): markdown for the comment body, json to drive the outputs + gate.
     - id: diff
       shell: bash
       env:
         PLUNE_VERSION: ${{ inputs.plune-version }}
+        HAS_BASELINE: ${{ steps.run-baseline.outputs.baseline }}
       run: |
+        # No baseline on the base ref (first eval PR): nothing to diff — emit a friendly note and clean
+        # outputs instead of crashing on a missing plune-baseline.json (ENOENT).
+        if [ "$HAS_BASELINE" != "true" ]; then
+          echo "_No Plune baseline on the base ref yet — nothing to diff. This is expected on the first PR that introduces evals._" > "$RUNNER_TEMP/plune-diff.md"
+          printf 'has-regression=false\nregressions=0\nsummary=no baseline yet\n' >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
         npx -y "@plune-ai/cli@$PLUNE_VERSION" diff "$RUNNER_TEMP/plune-baseline.json" "$RUNNER_TEMP/plune-current.json" --format markdown -o "$RUNNER_TEMP/plune-diff.md"
         npx -y "@plune-ai/cli@$PLUNE_VERSION" diff "$RUNNER_TEMP/plune-baseline.json" "$RUNNER_TEMP/plune-current.json" --format json -o "$RUNNER_TEMP/plune-diff.json"
         node -e '
