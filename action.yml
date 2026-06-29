@@ -69,7 +69,16 @@ runs:
         PLUNE_VERSION: ${{ inputs.plune-version }}
         PLUNE_CONFIG: ${{ inputs.config }}
       run: |
-        npx -y "@plune-ai/cli@$PLUNE_VERSION" run -c "$PLUNE_CONFIG" --format json -o "$RUNNER_TEMP/plune-current.json"
+        # `plune run` exits non-zero when an eval *fails* — a normal result this action exists to
+        # diff and report, not a hard error. Disambiguate by the output file: written = it ran (any
+        # pass/fail) → continue; absent = it could not run (e.g. bad config) → fail with a clear error.
+        npx -y "@plune-ai/cli@$PLUNE_VERSION" run -c "$PLUNE_CONFIG" --format json -o "$RUNNER_TEMP/plune-current.json" || true
+        if [ ! -s "$RUNNER_TEMP/plune-current.json" ]; then
+          echo "::error::plune run produced no output — check config '$PLUNE_CONFIG' and working-directory."
+          exit 1
+        fi
+        # Human-readable run report for the job summary (reads the cached run; no extra model calls).
+        npx -y "@plune-ai/cli@$PLUNE_VERSION" report --format markdown -o "$RUNNER_TEMP/plune-current.md" || true
 
     # Evals on the base ref, in a detached worktree so the PR checkout is untouched (ADR-GA02:
     # recompute baseline in the same job).
@@ -89,7 +98,13 @@ runs:
         # Mirror the PR-head run: cd into working-directory *inside* the base worktree, not its root.
         BASE_DIR="$RUNNER_TEMP/plune-base/$WORKING_DIRECTORY"
         if [ -f "$BASE_DIR/$PLUNE_CONFIG" ]; then
-          ( cd "$BASE_DIR" && npx -y "@plune-ai/cli@$PLUNE_VERSION" run -c "$PLUNE_CONFIG" --format json -o "$RUNNER_TEMP/plune-baseline.json" )
+          # As with run-current: a failing eval (non-zero exit) is a result, not an error. Trust the
+          # output file to tell ran-but-failed apart from could-not-run.
+          ( cd "$BASE_DIR" && npx -y "@plune-ai/cli@$PLUNE_VERSION" run -c "$PLUNE_CONFIG" --format json -o "$RUNNER_TEMP/plune-baseline.json" ) || true
+          if [ ! -s "$RUNNER_TEMP/plune-baseline.json" ]; then
+            echo "::error::plune run produced no baseline output — check config '$PLUNE_CONFIG' on base ref ($BASE_REF)."
+            exit 1
+          fi
           echo "baseline=true" >> "$GITHUB_OUTPUT"
         else
           # First PR to introduce evals: config doesn't exist on the base ref yet. Degrade gracefully.
@@ -113,6 +128,11 @@ runs:
         fi
         npx -y "@plune-ai/cli@$PLUNE_VERSION" diff "$RUNNER_TEMP/plune-baseline.json" "$RUNNER_TEMP/plune-current.json" --format markdown -o "$RUNNER_TEMP/plune-diff.md"
         npx -y "@plune-ai/cli@$PLUNE_VERSION" diff "$RUNNER_TEMP/plune-baseline.json" "$RUNNER_TEMP/plune-current.json" --format json -o "$RUNNER_TEMP/plune-diff.json"
+        if [ ! -s "$RUNNER_TEMP/plune-diff.json" ]; then
+          echo "::error::plune diff produced no JSON output ($RUNNER_TEMP/plune-diff.json). Temp dir:"
+          ls -la "$RUNNER_TEMP" || true
+          exit 1
+        fi
         node -e '
           const fs = require("fs");
           const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/plune-diff.json", "utf8")).summary;
@@ -138,6 +158,28 @@ runs:
             // diff and the regression gate still stand.
             core.warning('plune eval-diff: could not post comment — ' + (err && err.message ? err.message : err));
           }
+
+    # Mirror the human-readable results to the Actions run page ($GITHUB_STEP_SUMMARY), not only the
+    # PR comment — so re-runs, push/scheduled runs (no PR), and the first eval PR (no baseline) still
+    # show pass/fail/cost. Best-effort and always() so results survive even when the gate fails below.
+    - name: Job summary
+      if: ${{ always() }}
+      shell: bash
+      env:
+        HAS_BASELINE: ${{ steps.run-baseline.outputs.baseline }}
+        BASE_REF: ${{ inputs.base-ref }}
+      run: |
+        {
+          if [ -s "$RUNNER_TEMP/plune-current.md" ]; then
+            cat "$RUNNER_TEMP/plune-current.md"
+          else
+            echo "## Plune run"; echo; echo "_No run output was produced._"
+          fi
+          if [ "$HAS_BASELINE" = "true" ] && [ -s "$RUNNER_TEMP/plune-diff.md" ]; then
+            echo; echo "## Diff vs \`$BASE_REF\`"; echo
+            cat "$RUNNER_TEMP/plune-diff.md"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
 
     # Opt-in gate (AC-4): a quality regression fails the check (→ branch protection) only when asked.
     - name: Gate on regression
