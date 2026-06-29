@@ -71,7 +71,7 @@ branch does not turn the check red.
 | `use-mock` | `true` | Run on the built-in mock provider (no key, zero cost). Set `false` to use a real provider. |
 | `fail-on-regression` | `false` | Fail the check (block merge) when a regression is detected. |
 | `comment` | `true` | Post and update a sticky PR comment with the diff. |
-| `plune-version` | `0.2.2` | Version of `@plune-ai/cli` to install from npm. |
+| `plune-version` | `0.3.0` | Version of `@plune-ai/cli` to install from npm. |
 
 ## Outputs
 
