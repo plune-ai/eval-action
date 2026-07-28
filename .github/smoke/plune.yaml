@@ -1,0 +1,20 @@
+# Fixture for the repo's own smoke workflow (.github/workflows/smoke.yml) — not an example to copy.
+# For a config to start from, see the README quickstart or examples/plune-eval.yml.
+#
+# It asserts against the built-in mock provider's canned reply ("mock response"), so the eval passes
+# deterministically with no API key and no cost. The point is not the eval — it is that the four CLI
+# calls this action makes (`run`, `report`, `diff --format markdown`, `diff --format json`) still work
+# on the version pinned in action.yml.
+version: 1
+provider:
+  type: anthropic
+  model: claude-3-5-sonnet-latest
+evals:
+  - id: smoke
+    prompt: "Reply with the single word: hello"
+    dataset:
+      examples:
+        - vars: {}
+    assertions:
+      - type: contains
+        value: mock

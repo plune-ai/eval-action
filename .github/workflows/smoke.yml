@@ -1,0 +1,39 @@
+name: Smoke
+
+# Runs THIS action, from the working tree, against a tiny fixture — so a change to action.yml or to
+# the pinned CLI version has to prove itself on the pull request that makes it.
+#
+# Why it exists: `examples/smoke-test.yml` documents a manual check that needs a separate repository
+# AND an already-published `v1` tag, which makes it impossible to run *before* a release — exactly
+# when a `plune-version` bump most needs checking. `uses: ./` has no such problem: it exercises the
+# code in the branch.
+#
+# It runs on the built-in mock provider, so it needs no secret, no API key and costs nothing. Fork
+# pull requests are therefore safe too — nothing here reads a secret.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read # no comment is posted (comment: false), so no write scope is needed
+
+jobs:
+  smoke:
+    name: The action runs end-to-end on the pinned CLI
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the baseline run fetches and worktrees the base ref
+
+      - uses: ./
+        with:
+          config: plune.yaml
+          working-directory: .github/smoke
+          base-ref: ${{ github.base_ref || github.event.repository.default_branch }}
+          # A sticky comment on the action's own PRs would be noise, and skipping it keeps this
+          # workflow's token read-only.
+          comment: 'false'
