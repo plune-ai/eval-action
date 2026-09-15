@@ -78,7 +78,10 @@ runs:
           exit 1
         fi
         # Human-readable run report for the job summary (reads the cached run; no extra model calls).
-        npx -y "@plune-ai/cli@$PLUNE_VERSION" report --format markdown -o "$RUNNER_TEMP/plune-current.md" || true
+        # `-c` as on the run above: `plune report` looks for the run beside the config it is given,
+        # and without the flag that is `plune.yaml` in the working directory — so a config anywhere
+        # else (`evals/plune.yaml`) produced a summary that said "No run output" after a run that ran.
+        npx -y "@plune-ai/cli@$PLUNE_VERSION" report -c "$PLUNE_CONFIG" --format markdown -o "$RUNNER_TEMP/plune-current.md" || true
 
     # Evals on the base ref, in a detached worktree so the PR checkout is untouched (ADR-GA02:
     # recompute baseline in the same job).
