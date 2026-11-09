@@ -207,5 +207,5 @@ runs:
       env:
         UNMEASURED: ${{ steps.diff.outputs.unmeasured }}
       run: |
-        echo "::error::Plune could not measure $UNMEASURED eval(s) on this PR: the run errored (for example the provider did not answer). This is not a regression; re-run the job."
+        echo "::error::Plune could not measure $UNMEASURED eval(s) on this PR: their run errored. This is not a regression. If the provider did not answer, re-run the job; if the same eval errors every time (for example an llm-judge on the mock provider), the eval itself needs fixing - the run summary names the error."
         exit 1

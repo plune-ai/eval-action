@@ -39,7 +39,7 @@ jobs:
           config: plune.yaml
           base-ref: main
           # use-mock: 'true'           # default — zero-cost, deterministic, no API key
-          # fail-on-regression: 'true' # uncomment to block merges on a pass→fail regression
+          # fail-on-regression: 'true' # uncomment to block merges on a pass→fail regression or an eval that could not be measured
 ```
 
 With the safe defaults it runs on the **mock provider** — no API key, zero cost, fully
@@ -65,7 +65,10 @@ branch does not turn the check red.
 
 An eval that was not measured is not a regression, but it was not checked either, so "no
 regressions" would be a guess. With `fail-on-regression: true` the check fails with its own message
-(`Plune could not measure N eval(s)…`); re-running the job usually clears it. The `has-regression`
+(`Plune could not measure N eval(s)…`). A provider that did not answer is cleared by re-running the
+job; an eval that errors every time (for example an `llm-judge` assertion on the mock provider,
+which has no judge to ask) keeps the check red until the eval is fixed — the run summary names its
+error. The `has-regression`
 output stays `false` in that case, and the `unmeasured` output carries the count. With an older
 `plune-version` that does not report it, `unmeasured` is `0` and the action behaves as before.
 
