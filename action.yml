@@ -26,7 +26,7 @@ inputs:
     required: false
     default: 'true'
   fail-on-regression:
-    description: 'Fail the check when a pass→fail regression is detected. Off by default — the diff is always commented.'
+    description: 'Fail the check when a pass→fail regression is detected, or when an eval could not be measured (its run errored). Off by default — the diff is always commented.'
     required: false
     default: 'false'
   comment:
@@ -46,6 +46,9 @@ outputs:
   regressions:
     description: 'Number of pass→fail regressions.'
     value: ${{ steps.diff.outputs.regressions }}
+  unmeasured:
+    description: 'Number of evals the diff could not judge because a run errored (for example the provider did not answer). Not a regression; 0 when everything was measured.'
+    value: ${{ steps.diff.outputs.unmeasured }}
   summary:
     description: 'One-line diff summary.'
     value: ${{ steps.diff.outputs.summary }}
@@ -126,7 +129,7 @@ runs:
         # outputs instead of crashing on a missing plune-baseline.json (ENOENT).
         if [ "$HAS_BASELINE" != "true" ]; then
           echo "_No Plune baseline on the base ref yet — nothing to diff. This is expected on the first PR that introduces evals._" > "$RUNNER_TEMP/plune-diff.md"
-          printf 'has-regression=false\nregressions=0\nsummary=no baseline yet\n' >> "$GITHUB_OUTPUT"
+          printf 'has-regression=false\nregressions=0\nunmeasured=0\nsummary=no baseline yet\n' >> "$GITHUB_OUTPUT"
           exit 0
         fi
         npx -y "@plune-ai/cli@$PLUNE_VERSION" diff "$RUNNER_TEMP/plune-baseline.json" "$RUNNER_TEMP/plune-current.json" --format markdown -o "$RUNNER_TEMP/plune-diff.md"
@@ -139,7 +142,10 @@ runs:
         node -e '
           const fs = require("fs");
           const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/plune-diff.json", "utf8")).summary;
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `has-regression=${d.hasRegression}\nregressions=${d.regressions}\nsummary=${d.regressions} regression(s), ${d.improvements} improvement(s)\n`);
+          // `unmeasured` exists from @plune-ai/cli 0.34.1; an older pin has no such field and reads as 0, so it behaves as before.
+          const unmeasured = Number.isInteger(d.unmeasured) ? d.unmeasured : 0;
+          const notMeasured = unmeasured > 0 ? `, ${unmeasured} not measured` : "";
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `has-regression=${d.hasRegression}\nregressions=${d.regressions}\nunmeasured=${unmeasured}\nsummary=${d.regressions} regression(s), ${d.improvements} improvement(s)${notMeasured}\n`);
         '
 
     # Sticky comment via the official toolkit only (GA04). The upsert helper is a tested .mjs in
@@ -190,4 +196,16 @@ runs:
       shell: bash
       run: |
         echo "::error::Plune detected a quality regression (pass→fail) on this PR."
+        exit 1
+
+    # An eval whose run errored was not checked at all, so "no regressions" would be a guess. It is
+    # not a regression either: the message says so and points at a re-run. A regression, when there
+    # is one, is reported by the step above instead.
+    - name: Gate on an unmeasured run
+      if: ${{ inputs.fail-on-regression == 'true' && steps.diff.outputs.has-regression != 'true' && steps.diff.outputs.unmeasured != '' && steps.diff.outputs.unmeasured != '0' }}
+      shell: bash
+      env:
+        UNMEASURED: ${{ steps.diff.outputs.unmeasured }}
+      run: |
+        echo "::error::Plune could not measure $UNMEASURED eval(s) on this PR: the run errored (for example the provider did not answer). This is not a regression; re-run the job."
         exit 1

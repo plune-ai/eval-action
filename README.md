@@ -56,10 +56,18 @@ The diff classifies every eval by its transition between the base branch and the
 | `failed → passed` | improvement | no |
 | `failed → failed` | pre-existing failure | no |
 | absent → failed | new failure | no |
-| `errored` (either side) | execution error, not a quality change | no |
+| any → `errored` | **not measured**: the PR's run errored (for example the provider did not answer) | yes, as its own error (when `fail-on-regression: true`) |
+| `errored → failed` | **not measured**: nothing on the base branch to compare against | yes, as its own error (when `fail-on-regression: true`) |
+| `errored → passed` | improvement | no |
 
 Only a genuine `passed → failed` transition is a regression — an eval already failing on the base
 branch does not turn the check red.
+
+An eval that was not measured is not a regression, but it was not checked either, so "no
+regressions" would be a guess. With `fail-on-regression: true` the check fails with its own message
+(`Plune could not measure N eval(s)…`); re-running the job usually clears it. The `has-regression`
+output stays `false` in that case, and the `unmeasured` output carries the count. With an older
+`plune-version` that does not report it, `unmeasured` is `0` and the action behaves as before.
 
 ## Inputs
 
@@ -69,7 +77,7 @@ branch does not turn the check red.
 | `working-directory` | `.` | Directory to run Plune in. |
 | `base-ref` | `main` | Baseline git ref to compare against. |
 | `use-mock` | `true` | Run on the built-in mock provider (no key, zero cost). Set `false` to use a real provider. |
-| `fail-on-regression` | `false` | Fail the check (block merge) when a regression is detected. |
+| `fail-on-regression` | `false` | Fail the check (block merge) when a regression is detected, or when an eval could not be measured. |
 | `comment` | `true` | Post and update a sticky PR comment with the diff. |
 | `plune-version` | `0.34.2` | Version of `@plune-ai/cli` to install from npm. |
 
@@ -79,6 +87,7 @@ branch does not turn the check red.
 | --- | --- |
 | `has-regression` | `true` when at least one regression was detected. |
 | `regressions` | Number of regressions. |
+| `unmeasured` | Number of evals that could not be measured (their run errored); `0` when everything was measured. |
 | `summary` | One-line diff summary. |
 
 ## Run summary
