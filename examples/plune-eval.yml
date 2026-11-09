@@ -27,7 +27,7 @@ jobs:
           config: plune.yaml
           base-ref: main
           # use-mock: 'true'             # default — zero-cost, deterministic, no key needed
-          # fail-on-regression: 'true'   # uncomment to fail the check (block merge) on a regression
+          # fail-on-regression: 'true'   # uncomment to fail the check (block merge) on a regression or an unmeasured eval
           # comment: 'true'              # default — post/update the sticky PR comment
           #
           # To evaluate against a REAL provider instead of the mock, set use-mock: 'false' and pass
