@@ -38,6 +38,16 @@ jobs:
           # workflow's token read-only.
           comment: 'false'
 
+  scripts:
+    name: Script tests (node --test, no dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - run: node --test scripts/*.test.mjs
+
   # --- The MCP action (uses: ./mcp) against the fixture server in .github/smoke/mcp/. ---
   #
   # Off until the repository variable MCP_SMOKE_ENABLED is 'true': these jobs need a published CLI
