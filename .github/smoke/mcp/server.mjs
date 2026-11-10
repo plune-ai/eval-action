@@ -4,7 +4,8 @@
 //
 // clean   one read-only tool and one that changes state; answers initialize, ping, tools/list and
 //         tools/call (of the read-only tool only).
-// broken  breaks the specification: a tool whose `required` names a property it does not have,
+// broken  breaks the specification: a tool whose closed schema (additionalProperties: false) lists
+//         in `required` a property it does not define, so no call can satisfy it,
 //         and a declared `prompts` capability whose list answers with an error.
 // empty   declares tools and lists none: nothing to measure.
 //
@@ -45,7 +46,7 @@ const reset = {
 };
 const tools = {
   clean: [status, reset],
-  broken: [{ ...status, inputSchema: { type: 'object', properties: {}, required: ['missing'] } }],
+  broken: [{ ...status, inputSchema: { type: 'object', properties: {}, additionalProperties: false, required: ['missing'] } }],
   empty: [],
 }[mode];
 
