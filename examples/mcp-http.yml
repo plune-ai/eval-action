@@ -1,0 +1,67 @@
+# Example consumer workflow for the Plune MCP action: a Streamable HTTP server.
+# Copy this into YOUR repository at .github/workflows/mcp.yml.
+#
+# The server is started in the background by a step of the same job; check keeps trying to reach
+# it for `wait` (no sleep needed), and check runs before lint and diff. Credentials come from a
+# secret through the env of the action's step, by variable name: the value is never on a command
+# line, and the action reads no secret itself.
+#
+# Pull requests from forks get no secrets, and the action stops with an error naming the empty
+# variable before it contacts the server. So the job with the secret skips fork PRs; the second job
+# shows the fork recipe: no secret, the server started without auth.
+
+name: MCP server
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write # only for the PR comment; with comment: 'false' remove this line
+
+jobs:
+  mcp:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - run: npm ci && npm run build
+
+      - name: Start the server
+        run: node dist/http-server.js > "$RUNNER_TEMP/server.log" 2>&1 &
+        env:
+          PORT: '3000'
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+
+      - uses: plune-ai/eval-action/mcp@v1
+        with:
+          steps: lint,check
+          server-url: http://127.0.0.1:3000/mcp
+          wait: 30s
+          headers-from-env: Authorization=MCP_AUTHORIZATION
+        env:
+          MCP_AUTHORIZATION: Bearer ${{ secrets.MCP_AUTH_TOKEN }}
+
+  # Fork PRs: no secret, so test a server that needs none (here the same server with auth off).
+  mcp-fork:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - run: npm ci && npm run build
+      - name: Start the server without auth
+        run: node dist/http-server.js > "$RUNNER_TEMP/server.log" 2>&1 &
+        env:
+          PORT: '3000'
+      - uses: plune-ai/eval-action/mcp@v1
+        with:
+          steps: lint,check
+          server-url: http://127.0.0.1:3000/mcp
