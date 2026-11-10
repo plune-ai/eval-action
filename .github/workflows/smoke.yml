@@ -37,3 +37,221 @@ jobs:
           # A sticky comment on the action's own PRs would be noise, and skipping it keeps this
           # workflow's token read-only.
           comment: 'false'
+
+  scripts:
+    name: Script tests (node --test, no dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - run: node --test scripts/*.test.mjs
+
+  # --- The MCP action (uses: ./mcp) against the fixture server in .github/smoke/mcp/. ---
+  #
+  # Every assertion reads the step outputs through env, and the fixture's own journal (--log):
+  # how many times each command connected, which tools were called, whether anything arrived.
+
+  mcp-stdio:
+    name: MCP action, stdio server, lint + check --smoke + diff, green and measured
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      # The committed-snapshot case, with the snapshot taken here from the same clean fixture, so
+      # diff must find nothing. No --log here: the journal counts the action's connections only.
+      - name: Snapshot the fixture with the pinned CLI
+        run: |
+          PLUNE_VERSION="$(sed -n "/^  plune-version:/,/default:/s/.*default: '\(.*\)'/\1/p" mcp/action.yml)"
+          npx -y "@plune-ai/cli@$PLUNE_VERSION" mcp snapshot --out "$RUNNER_TEMP/mcp-snapshot.json" -- node .github/smoke/mcp/server.mjs clean
+
+      - id: mcp
+        uses: ./mcp
+        with:
+          steps: lint,check,diff
+          server-command: node .github/smoke/mcp/server.mjs clean --log ${{ runner.temp }}/stdio.log
+          snapshot-file: ${{ runner.temp }}/mcp-snapshot.json
+          smoke: 'true'
+          comment: 'false' # keeps this workflow's token read-only
+          artifact-name: mcp-smoke-stdio
+
+      - name: Outputs, reports and journal are as expected
+        env:
+          OUT_MEASURED: ${{ steps.mcp.outputs.measured }}
+          OUT_EXITS: ${{ steps.mcp.outputs.check-exit }}/${{ steps.mcp.outputs.lint-exit }}/${{ steps.mcp.outputs.diff-exit }}
+          REPORT_DIR: ${{ steps.mcp.outputs.report-dir }}
+        run: |
+          set -eu
+          test "$OUT_MEASURED" = true
+          test "$OUT_EXITS" = 0/0/0
+          for c in check lint diff; do for e in json xml md; do test -s "$REPORT_DIR/$c.$e"; done; done
+          head -n 1 "$REPORT_DIR/check.md" | grep -qx '<!-- plune-mcp-check -->'
+          # One connection per command, whatever the number of report forms.
+          test "$(grep -c '"method":"initialize"' "$RUNNER_TEMP/stdio.log")" = 3
+          # --smoke called the read-only tool and never the one that changes state.
+          grep -q '"tool":"get_status"' "$RUNNER_TEMP/stdio.log"
+          if grep -q '"tool":"reset_counter"' "$RUNNER_TEMP/stdio.log"; then exit 1; fi
+
+  mcp-http:
+    name: MCP action, HTTP server with a header from env; an empty variable stops it first
+    runs-on: ubuntu-latest
+    env:
+      # Not a secret: a fixed value the fixture expects, so the job can search the reports for it.
+      SMOKE_TOKEN: plune-smoke-header-value-7f3a
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Start the fixture in the background
+        run: node .github/smoke/mcp/server.mjs clean --http 3917 --log "$RUNNER_TEMP/http.log" &
+        env:
+          FIXTURE_TOKEN: ${{ env.SMOKE_TOKEN }}
+
+      - id: mcp
+        uses: ./mcp
+        with:
+          server-url: http://127.0.0.1:3917/mcp
+          wait: 30s
+          headers-from-env: Authorization=MCP_SMOKE_AUTH
+          comment: 'false'
+          artifact-name: mcp-smoke-http
+        env:
+          MCP_SMOKE_AUTH: ${{ env.SMOKE_TOKEN }}
+
+      - name: Green, measured, and the header value is in no report
+        env:
+          OUT_MEASURED: ${{ steps.mcp.outputs.measured }}
+          OUT_EXITS: ${{ steps.mcp.outputs.check-exit }}/${{ steps.mcp.outputs.lint-exit }}
+          REPORT_DIR: ${{ steps.mcp.outputs.report-dir }}
+        run: |
+          set -eu
+          test "$OUT_MEASURED" = true
+          test "$OUT_EXITS" = 0/0
+          if grep -rqF "$SMOKE_TOKEN" "$REPORT_DIR"; then echo "::error::header value found in the reports"; exit 1; fi
+          if grep -q '"refused":true' "$RUNNER_TEMP/http.log"; then exit 1; fi
+          wc -l < "$RUNNER_TEMP/http.log" > "$RUNNER_TEMP/http.lines"
+
+      # As on a pull request from a fork: the variable is there, but empty.
+      - id: nosecret
+        continue-on-error: true
+        uses: ./mcp
+        with:
+          server-url: http://127.0.0.1:3917/mcp
+          headers-from-env: Authorization=MCP_SMOKE_EMPTY
+          comment: 'false'
+          artifact-name: mcp-smoke-nosecret
+        env:
+          MCP_SMOKE_EMPTY: ''
+
+      - name: Red before any request reached the server
+        env:
+          OUTCOME: ${{ steps.nosecret.outcome }}
+          OUT_MEASURED: ${{ steps.nosecret.outputs.measured }}
+        run: |
+          set -eu
+          test "$OUTCOME" = failure
+          test "$OUT_MEASURED" = false
+          test "$(wc -l < "$RUNNER_TEMP/http.log")" = "$(cat "$RUNNER_TEMP/http.lines")"
+
+  mcp-nostart:
+    name: MCP action, a server command that does not exist is red with exit 2
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: nostart
+        continue-on-error: true
+        uses: ./mcp
+        with:
+          server-command: does-not-exist-xyz
+          comment: 'false'
+          artifact-name: mcp-smoke-nostart
+
+      - name: Red, exit 2, not measured
+        env:
+          OUTCOME: ${{ steps.nostart.outcome }}
+          CHECK_EXIT: ${{ steps.nostart.outputs.check-exit }}
+          OUT_MEASURED: ${{ steps.nostart.outputs.measured }}
+        run: |
+          set -eu
+          test "$OUTCOME" = failure
+          test "$CHECK_EXIT" = 2
+          test "$OUT_MEASURED" = false
+
+  mcp-broken:
+    name: MCP action, a server that breaks the specification is red (advisory with fail-on never)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: broken
+        continue-on-error: true
+        uses: ./mcp
+        with:
+          server-command: node .github/smoke/mcp/server.mjs broken
+          comment: 'false'
+          artifact-name: mcp-smoke-broken
+
+      - id: advisory
+        uses: ./mcp
+        with:
+          server-command: node .github/smoke/mcp/server.mjs broken
+          fail-on: never
+          comment: 'false'
+          artifact-name: mcp-smoke-broken-advisory
+
+      - name: Red was red; never kept it green
+        env:
+          OUTCOME: ${{ steps.broken.outcome }}
+          OUT_EXITS: ${{ steps.broken.outputs.check-exit }}/${{ steps.broken.outputs.lint-exit }}
+          OUT_MEASURED: ${{ steps.broken.outputs.measured }}
+          ADVISORY: ${{ steps.advisory.outcome }}
+        run: |
+          set -eu
+          test "$OUTCOME" = failure
+          test "$OUT_EXITS" = 1/1
+          test "$OUT_MEASURED" = true
+          test "$ADVISORY" = success
+
+  mcp-empty:
+    name: MCP action, a server without tools is red and not measured (warning with fail-on never)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: empty
+        continue-on-error: true
+        uses: ./mcp
+        with:
+          server-command: node .github/smoke/mcp/server.mjs empty
+          comment: 'false'
+          artifact-name: mcp-smoke-empty
+
+      - id: advisory
+        uses: ./mcp
+        with:
+          server-command: node .github/smoke/mcp/server.mjs empty
+          fail-on: never
+          comment: 'false'
+          artifact-name: mcp-smoke-empty-advisory
+
+      - name: Red and not measured; never kept it green, still not measured
+        env:
+          OUTCOME: ${{ steps.empty.outcome }}
+          LINT_EXIT: ${{ steps.empty.outputs.lint-exit }}
+          OUT_MEASURED: ${{ steps.empty.outputs.measured }}
+          ADVISORY: ${{ steps.advisory.outcome }}
+          ADVISORY_MEASURED: ${{ steps.advisory.outputs.measured }}
+        run: |
+          set -eu
+          test "$OUTCOME" = failure
+          test "$LINT_EXIT" = 3
+          test "$OUT_MEASURED" = false
+          test "$ADVISORY" = success
+          test "$ADVISORY_MEASURED" = false

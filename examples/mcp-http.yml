@@ -1,0 +1,70 @@
+# Example consumer workflow for the Plune MCP action: a Streamable HTTP server.
+# Copy this into YOUR repository at .github/workflows/mcp.yml.
+#
+# The server is started in the background by a step of the same job; check keeps trying to reach
+# it for `wait` (no sleep needed), and check runs before lint and diff. Credentials come from a
+# secret through the env of the action's step, by variable name: the value is never on a command
+# line, and the action reads no secret itself.
+#
+# Pull requests from forks get no secrets, nor do Dependabot's (they get Dependabot secrets only),
+# and the action stops with an error naming the empty variable before it contacts the server. So
+# the job with the secret skips both; the second job shows the recipe for them: no secret, the
+# server started without auth.
+
+name: MCP server
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write # only for the PR comment; with comment: 'false' remove this line
+
+jobs:
+  mcp:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - run: npm ci && npm run build
+
+      - name: Start the server
+        run: node dist/http-server.js > "$RUNNER_TEMP/server.log" 2>&1 &
+        env:
+          PORT: '3000'
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+
+      - uses: plune-ai/eval-action/mcp@v1
+        with:
+          steps: lint,check
+          server-url: http://127.0.0.1:3000/mcp
+          wait: 30s
+          headers-from-env: Authorization=MCP_AUTHORIZATION
+        env:
+          # The secret holds the whole header value ("Bearer <token>"): without it the variable is
+          # empty, where "Bearer " in front of a missing secret would still look set.
+          MCP_AUTHORIZATION: ${{ secrets.MCP_AUTHORIZATION }}
+
+  # Fork and Dependabot PRs: no secret, so test a server that needs none (here auth off).
+  mcp-fork:
+    if: github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - run: npm ci && npm run build
+      - name: Start the server without auth
+        run: node dist/http-server.js > "$RUNNER_TEMP/server.log" 2>&1 &
+        env:
+          PORT: '3000'
+      - uses: plune-ai/eval-action/mcp@v1
+        with:
+          steps: lint,check
+          server-url: http://127.0.0.1:3000/mcp

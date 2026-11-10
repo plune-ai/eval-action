@@ -7,12 +7,15 @@ own** — only the orchestration in `action.yml` and a small sticky-comment help
 ## What's here
 
 - `action.yml` — the composite steps and the input/output contract.
-- `scripts/upsert-comment.mjs` — posts and updates the sticky PR comment (the only runtime logic).
+- `mcp/action.yml` — the MCP action (`plune-ai/eval-action/mcp@v1`), with its own contract.
+- `scripts/upsert-comment.mjs` — posts and updates the sticky PR comment.
+- `scripts/mcp.mjs` — turns the MCP action's inputs into `plune mcp` arguments and judges the exit codes.
+- `scripts/*.test.mjs` — their tests: `node --test scripts/*.test.mjs`, no dependencies.
 - `examples/` — copy-paste consumer workflows.
 
 ## Public contract
 
-The Action's inputs and outputs are a **public contract**. Changing or removing one is a
+The inputs and outputs of both actions are a **public contract**. Changing or removing one is a
 breaking change: bump the major tag (`v1` → `v2`) and call it out in the release notes.
 
 ## Versioning

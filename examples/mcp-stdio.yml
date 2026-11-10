@@ -1,0 +1,41 @@
+# Example consumer workflow for the Plune MCP action: a stdio server.
+# Copy this into YOUR repository at .github/workflows/mcp.yml.
+#
+# The action starts the server itself (server-command), lints its tool list, checks that it
+# answers the basic requests, and compares its contract with the committed snapshot. Create or
+# refresh the snapshot on your machine and commit it:
+#   npx @plune-ai/cli mcp snapshot --out mcp-snapshot.json -- node dist/server.js
+#
+# No secret is needed, so this job runs on pull requests from forks too (the comment is skipped
+# there: a fork's token is read-only).
+
+name: MCP server
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write # only for the PR comment; with comment: 'false' remove this line
+
+jobs:
+  mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - run: npm ci && npm run build
+
+      - uses: plune-ai/eval-action/mcp@v1
+        with:
+          steps: lint,check,diff
+          # Split on spaces, no shell: for anything more, point it at a script in your repository.
+          server-command: node dist/server.js
+          snapshot-file: mcp-snapshot.json
+          # smoke: 'true'      # also call each tool that says it is read-only and takes no argument
+          # fail-on: never     # advisory: report, never fail the check
+          # ignore-file: plune-mcp-ignore.yaml

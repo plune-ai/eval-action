@@ -1,0 +1,184 @@
+name: 'Plune MCP check'
+description: 'Lint, check and diff an MCP server on every pull request: annotations, one updated comment, a job summary and report artifacts.'
+author: 'plune-ai'
+branding:
+  icon: 'check-circle'
+  color: 'purple'
+
+# Thin wrapper over `plune mcp` of @plune-ai/cli, beside the eval-diff action at the repository
+# root (uses: plune-ai/eval-action/mcp@v1). No check, rule or report text lives here: the steps turn
+# the inputs into arguments (scripts/mcp.mjs), start each command once, and post what the CLI wrote.
+# Inputs/outputs are a public contract: changing them is a breaking change (bump the major tag).
+inputs:
+  steps:
+    description: 'Comma-separated commands to run: lint, check, diff. They run in the order check, lint, diff, so the wait of check covers a server at server-url.'
+    required: false
+    default: 'lint,check'
+  server-command:
+    description: 'Command that starts a stdio server, split on spaces: no quotes, no shell. Anything more complex belongs in a script in your repository that this names. Not with server-url.'
+    required: false
+    default: ''
+  server-url:
+    description: 'URL of a Streamable HTTP server already started by an earlier step. Not with server-command.'
+    required: false
+    default: ''
+  wait:
+    description: 'How long check keeps trying to reach server-url (plune mcp check --wait), e.g. 30s.'
+    required: false
+    default: '30s'
+  headers-from-env:
+    description: 'Comma-separated Header=ENV_VAR: each header is read from that variable, set in the env of this step from a secret (plune mcp --header-env). An empty or unset variable stops the action before the server is contacted. Only with server-url.'
+    required: false
+    default: ''
+  fail-on:
+    description: 'Lint threshold: error, warn, info or never. never makes the whole action advisory, diff included: nothing fails the check, a failed command gives a notice, a server that could not be tested or measured gives a warning.'
+    required: false
+    default: 'error'
+  ignore-file:
+    description: 'Lint exceptions file (plune mcp lint --ignore-file).'
+    required: false
+    default: ''
+  snapshot-file:
+    description: 'Committed contract snapshot (plune mcp snapshot) that diff compares the server with. Required when steps has diff.'
+    required: false
+    default: ''
+  diff-fail-on:
+    description: 'Diff threshold: breaking, any or none.'
+    required: false
+    default: 'breaking'
+  smoke:
+    description: 'Add --smoke to check: call each tool that says it is read-only and needs no argument.'
+    required: false
+    default: 'false'
+  comment:
+    description: 'Post (and update in place) one PR comment with the reports. Needs pull-requests: write.'
+    required: false
+    default: 'true'
+  debug-artifact:
+    description: 'Also upload the frame journal of each command (--debug-out). It can hold what the tools returned, so it is off by default.'
+    required: false
+    default: 'false'
+  artifact-name:
+    description: 'Name of the reports artifact (the frame journal gets "-debug" appended). Set a distinct one when the action runs more than once in a workflow run.'
+    required: false
+    default: 'plune-mcp-reports'
+  working-directory:
+    description: 'Directory to run in; server-command, ignore-file and snapshot-file are relative to it.'
+    required: false
+    default: '.'
+  plune-version:
+    description: 'Version of @plune-ai/cli to install from npm. Pinned for reproducibility; tracks this action release.'
+    required: false
+    default: '0.34.5'
+
+outputs:
+  lint-exit:
+    description: 'Exit code of plune mcp lint; 2 as well when it wrote no report (the CLI could not be installed or started); empty when it did not run.'
+    value: ${{ steps.run.outputs.lint-exit }}
+  check-exit:
+    description: 'Exit code of plune mcp check; 2 as well when it wrote no report (the CLI could not be installed or started); empty when it did not run.'
+    value: ${{ steps.run.outputs.check-exit }}
+  diff-exit:
+    description: 'Exit code of plune mcp diff; 2 as well when it wrote no report (the CLI could not be installed or started); empty when it did not run.'
+    value: ${{ steps.run.outputs.diff-exit }}
+  measured:
+    description: 'true when no command that ran exited 2 (could not test the server) or 3 (measured nothing).'
+    value: ${{ steps.run.outputs.measured }}
+  summary:
+    description: 'One line: the exit code of each command that ran.'
+    value: ${{ steps.run.outputs.summary }}
+  report-dir:
+    description: 'Folder with the reports: <command>.json, <command>.xml (JUnit) and <command>.md.'
+    value: ${{ steps.run.outputs.report-dir }}
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: '20'
+
+    # Every input goes in as env, never into the script text (no expression injection). Each
+    # command is started once and writes every report form in that one run. The step itself fails
+    # only on a wrong input; the exit codes are judged by the gate at the end.
+    - id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PLUNE_VERSION: ${{ inputs.plune-version }}
+        PLUNE_MCP_STEPS: ${{ inputs.steps }}
+        PLUNE_MCP_SERVER_COMMAND: ${{ inputs.server-command }}
+        PLUNE_MCP_SERVER_URL: ${{ inputs.server-url }}
+        PLUNE_MCP_WAIT: ${{ inputs.wait }}
+        PLUNE_MCP_HEADERS_FROM_ENV: ${{ inputs.headers-from-env }}
+        PLUNE_MCP_FAIL_ON: ${{ inputs.fail-on }}
+        PLUNE_MCP_IGNORE_FILE: ${{ inputs.ignore-file }}
+        PLUNE_MCP_SNAPSHOT_FILE: ${{ inputs.snapshot-file }}
+        PLUNE_MCP_DIFF_FAIL_ON: ${{ inputs.diff-fail-on }}
+        PLUNE_MCP_SMOKE: ${{ inputs.smoke }}
+        PLUNE_MCP_DEBUG: ${{ inputs.debug-artifact }}
+      run: node "$GITHUB_ACTION_PATH/../scripts/mcp.mjs" run
+
+    # One comment for the MCP reports, apart from the eval-diff comment (its own marker). Best-effort:
+    # an API hiccup or a fork's read-only token does not fail the check. always(): when the run step
+    # stops on a wrong input, the comment says so instead of keeping an older run's verdict.
+    - if: ${{ always() && inputs.comment == 'true' }}
+      uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        PLUNE_MCP_SUMMARY: ${{ steps.run.outputs.summary }}
+        PLUNE_MCP_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+      with:
+        script: |
+          const path = require('path');
+          const { pathToFileURL } = require('url');
+          const load = (f) => import(pathToFileURL(path.join(process.env.ACTION_PATH, '..', 'scripts', f)).href);
+          try {
+            const { commentBody, COMMENT_LIMIT } = await load('mcp.mjs');
+            const { upsertStickyComment } = await load('upsert-comment.mjs');
+            const body = commentBody(path.join(process.env.RUNNER_TEMP, 'plune-mcp'), process.env.PLUNE_MCP_SUMMARY || 'the run step did not finish', {
+              limit: COMMENT_LIMIT,
+              artifactName: process.env.PLUNE_MCP_ARTIFACT_NAME,
+            });
+            const res = await upsertStickyComment(github, context, body, '<!-- plune-mcp -->');
+            core.info('plune mcp comment: ' + res.action + (res.reason ? ' (' + res.reason + ')' : ''));
+          } catch (err) {
+            core.warning('plune mcp: could not post comment — ' + (err && err.message ? err.message : err));
+          }
+
+    # The same text on the run page, always(): it must be there when the gate below is red.
+    - name: Job summary
+      if: ${{ always() }}
+      shell: bash
+      env:
+        PLUNE_MCP_SUMMARY: ${{ steps.run.outputs.summary }}
+      run: node "$GITHUB_ACTION_PATH/../scripts/mcp.mjs" body >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload reports
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ runner.temp }}/plune-mcp
+        retention-days: 7
+        if-no-files-found: ignore
+
+    # The frame journal can hold tool results: only on explicit request.
+    - name: Upload frame journal
+      if: ${{ always() && inputs.debug-artifact == 'true' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}-debug
+        path: ${{ runner.temp }}/plune-mcp-debug
+        retention-days: 3
+        if-no-files-found: ignore
+
+    # Red on exit 1, 2 or 3 of any command; with fail-on never, advisory: exit 2 and 3 warn.
+    - name: Gate
+      shell: bash
+      env:
+        PLUNE_MCP_FAIL_ON: ${{ inputs.fail-on }}
+        PLUNE_MCP_CHECK_EXIT: ${{ steps.run.outputs.check-exit }}
+        PLUNE_MCP_LINT_EXIT: ${{ steps.run.outputs.lint-exit }}
+        PLUNE_MCP_DIFF_EXIT: ${{ steps.run.outputs.diff-exit }}
+      run: node "$GITHUB_ACTION_PATH/../scripts/mcp.mjs" gate
