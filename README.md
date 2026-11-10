@@ -82,7 +82,7 @@ output stays `false` in that case, and the `unmeasured` output carries the count
 | `use-mock` | `true` | Run on the built-in mock provider (no key, zero cost). Set `false` to use a real provider. |
 | `fail-on-regression` | `false` | Fail the check (block merge) when a regression is detected, or when an eval could not be measured. |
 | `comment` | `true` | Post and update a sticky PR comment with the diff. |
-| `plune-version` | `0.34.4` | Version of `@plune-ai/cli` to install from npm. |
+| `plune-version` | `0.34.5` | Version of `@plune-ai/cli` to install from npm. |
 
 ## Outputs
 
