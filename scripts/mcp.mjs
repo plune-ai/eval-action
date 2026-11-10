@@ -21,6 +21,13 @@ const ORDER = ['check', 'lint', 'diff'];
 const LINT_FAIL_ON = ['error', 'warn', 'info', 'never'];
 const DIFF_FAIL_ON = ['breaking', 'any', 'none'];
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// `Bearer ${{ secrets.X }}` without the secret is "Bearer ", not "": a scheme with nothing after it
+// is as empty as no value at all.
+const BARE_SCHEME = /^(bearer|basic|token)$/i;
+const emptyCredential = (value) => {
+  const v = (value ?? '').trim();
+  return v === '' || BARE_SCHEME.test(v);
+};
 
 const words = (s) => (s ?? '').trim().split(/\s+/).filter(Boolean);
 const list = (s) => (s ?? '').split(',').map((x) => x.trim()).filter(Boolean);
@@ -52,7 +59,7 @@ export function plan(env) {
   // Before anything starts: on a pull request from a fork the secret is not there, and an empty
   // credential must not go out. The name is printed, never a value.
   for (const { variable } of headers) {
-    if (!env[variable])
+    if (emptyCredential(env[variable]))
       throw new InputError(
         `headers-from-env: the variable ${variable} is not set or is empty (a pull request from a fork gets no secrets). Nothing was started.`,
       );
@@ -94,9 +101,10 @@ export function plan(env) {
 }
 
 /**
- * `npx @plune-ai/cli mcp <args>` with the arguments as an array: bash only `exec`s, it never parses
- * them, so nothing in an input runs as shell. bash rather than npx directly: it is on every runner,
- * and on Windows npx is a .cmd file that Node will not start without a shell.
+ * `npx @plune-ai/cli mcp <args>`. The arguments are passed to bash as an array after the script
+ * (`"$@"`), never put into its text; npx builds its own command line and quotes them for its shell
+ * (checked on Linux runners only; Windows runners not checked). bash rather than npx directly: it
+ * is on every runner, and on Windows npx is a .cmd file that Node will not start without a shell.
  */
 export function spawnPlune(args, env = process.env, script = 'exec npx -y "@plune-ai/cli@$PLUNE_VERSION" mcp "$@"', cwd) {
   const res = spawnSync('bash', ['-c', script, 'plune', ...args], { stdio: 'inherit', env, cwd });
@@ -122,7 +130,7 @@ export function run(env, spawn = (args) => spawnPlune(args)) {
     p = plan(env);
   } catch (err) {
     if (!(err instanceof InputError)) throw err;
-    return { error: err.message, outputs: { ...results({}), measured: 'false', summary: 'input error' } };
+    return { error: err.message, outputs: { ...results({}), measured: 'false', summary: `input error: ${err.message}` } };
   }
   // A second use of the action in one job must not comment or upload the first one's reports.
   for (const dir of [p.reportDir, p.debugDir].filter(Boolean)) {
@@ -140,13 +148,25 @@ export function run(env, spawn = (args) => spawnPlune(args)) {
   return { outputs: { ...results(exits), 'report-dir': p.reportDir } };
 }
 
-/** The CLI's markdown reports in run order, as written; the comment's marker is added by the upsert. */
-export function commentBody(reportDir, summary) {
+// GitHub's exact limit for a comment body is not confirmed in its docs (65 536 is the figure
+// usually cited); 60 000 leaves room for the marker and the note.
+export const COMMENT_LIMIT = 60000;
+
+/**
+ * The CLI's markdown reports in run order, as written; the comment's marker is added by the upsert.
+ * With `limit`, a longer text is cut at the last whole line and ends with where the rest is. With
+ * no report at all, a short text that says so: the comment must not keep an older run's verdict.
+ */
+export function commentBody(reportDir, summary, { limit, artifactName = 'plune-mcp-reports' } = {}) {
   const parts = ORDER.map((name) => path.join(reportDir, `${name}.md`))
     .filter((f) => fs.existsSync(f))
     .map((f) => fs.readFileSync(f, 'utf8'));
-  if (parts.length === 0) return `### MCP\n\nNo report was written (${summary}). The job log has the reason.\n`;
-  return parts.join('\n');
+  if (parts.length === 0) return `### MCP\n\nThis run produced no report: ${summary}; see the job log.\n`;
+  const text = parts.join('\n');
+  if (!limit || text.length <= limit) return text;
+  const note = `\n… the full report is in the job summary and the \`${artifactName}\` artifact\n`;
+  const kept = text.slice(0, limit - note.length);
+  return kept.slice(0, kept.lastIndexOf('\n') + 1) + note;
 }
 
 const WHY = {
@@ -155,18 +175,20 @@ const WHY = {
   3: 'measured nothing (exit 3): not measured is not clean.',
 };
 
-/** Errors fail the check; with fail-on never only exit 2 and 3 are reported, as warnings. */
+/** Errors fail the check; with fail-on never nothing does: exit 2 and 3 warn, exit 1 is a notice. */
 export function gate(exits, failOn) {
   const errors = [];
   const warnings = [];
+  const notices = [];
   for (const name of ORDER) {
     const code = exits[name];
     if (code === undefined || code === 0) continue;
     const message = `plune mcp ${name} ${WHY[code] ?? `exited ${code}.`}`;
     if (failOn !== 'never') errors.push(message);
-    else if (code !== 1) warnings.push(message);
+    else if (code === 1) notices.push(`${message} Advisory: fail-on is never.`);
+    else warnings.push(message);
   }
-  return { errors, warnings };
+  return { errors, warnings, notices };
 }
 
 // Workflow-command escaping of a message (https://github.com/actions/toolkit, `escapeData`).
@@ -177,7 +199,8 @@ function main(mode, env) {
     const res = run(env);
     fs.appendFileSync(
       env.GITHUB_OUTPUT,
-      Object.entries(res.outputs).map(([k, v]) => `${k}=${v}\n`).join(''),
+      // One line each: an input error's text in `summary` must not start a second output.
+      Object.entries(res.outputs).map(([k, v]) => `${k}=${String(v).replace(/[\r\n]+/g, ' ')}\n`).join(''),
     );
     if (res.error) {
       console.log(`::error::${escape(res.error)}`);
@@ -186,7 +209,8 @@ function main(mode, env) {
     return 0;
   }
   if (mode === 'body') {
-    process.stdout.write(commentBody(path.join(env.RUNNER_TEMP, 'plune-mcp'), env.PLUNE_MCP_SUMMARY || 'nothing ran'));
+    // The job summary: the whole text, no cut (its limit is far above a comment's).
+    process.stdout.write(commentBody(path.join(env.RUNNER_TEMP, 'plune-mcp'), env.PLUNE_MCP_SUMMARY || 'the run step did not finish'));
     return 0;
   }
   if (mode === 'gate') {
@@ -195,7 +219,8 @@ function main(mode, env) {
       const v = env[`PLUNE_MCP_${name.toUpperCase()}_EXIT`];
       if (v) exits[name] = Number(v);
     }
-    const { errors, warnings } = gate(exits, env.PLUNE_MCP_FAIL_ON);
+    const { errors, warnings, notices } = gate(exits, env.PLUNE_MCP_FAIL_ON);
+    for (const n of notices) console.log(`::notice::${escape(n)}`);
     for (const w of warnings) console.log(`::warning::${escape(w)}`);
     for (const e of errors) console.log(`::error::${escape(e)}`);
     return errors.length > 0 ? 1 : 0;

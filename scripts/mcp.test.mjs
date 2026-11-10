@@ -134,8 +134,21 @@ for (const [what, value] of [['empty', ''], ['unset', undefined]]) {
     assert.equal(spawned, 0);
     assert.equal(res.error.includes('MCP_AUTH'), true);
     assert.equal(res.outputs.measured, 'false');
+    assert.match(res.outputs.summary, /^input error: headers-from-env: the variable MCP_AUTH/);
   });
 }
+
+for (const value of ['Bearer ', ' ', 'bearer', 'Basic', 'token  ']) {
+  test(`MCP action · inputs · a headers-from-env variable holding only "${value}" counts as empty and is refused by name`, () => {
+    const env = inputs({ PLUNE_MCP_SERVER_COMMAND: '', PLUNE_MCP_SERVER_URL: 'http://h/mcp', PLUNE_MCP_HEADERS_FROM_ENV: 'Authorization=MCP_AUTH', MCP_AUTH: value });
+    assert.throws(() => plan(env), (err) => err instanceof InputError && /MCP_AUTH is not set or is empty/.test(err.message));
+  });
+}
+
+test('MCP action · inputs · a scheme with a credential after it is not empty', () => {
+  const env = inputs({ PLUNE_MCP_SERVER_COMMAND: '', PLUNE_MCP_SERVER_URL: 'http://h/mcp', PLUNE_MCP_HEADERS_FROM_ENV: 'Authorization=MCP_AUTH', MCP_AUTH: 'Bearer x' });
+  assert.equal(plan(env).commands.length, 2);
+});
 
 test('MCP action · run · each command is started exactly once, whatever the number of report forms', () => {
   const calls = [];
@@ -181,7 +194,7 @@ test('MCP action · results · measured is false on exit 2 or 3, and not run is 
 });
 
 test('MCP action · gate · any exit 1, 2 or 3 fails at the default threshold', () => {
-  assert.deepEqual(gate({ check: 0, lint: 0 }, 'error'), { errors: [], warnings: [] });
+  assert.deepEqual(gate({ check: 0, lint: 0 }, 'error'), { errors: [], warnings: [], notices: [] });
   for (const code of [1, 2, 3]) {
     const g = gate({ check: 0, lint: code }, 'error');
     assert.equal(g.errors.length, 1, `exit ${code}`);
@@ -190,8 +203,11 @@ test('MCP action · gate · any exit 1, 2 or 3 fails at the default threshold', 
   assert.match(gate({ lint: 3 }, 'warn').errors[0], /measured nothing/);
 });
 
-test('MCP action · gate · fail-on never is advisory: exit 1 passes, exit 2 and 3 warn', () => {
-  assert.deepEqual(gate({ check: 1, lint: 0 }, 'never'), { errors: [], warnings: [] });
+test('MCP action · gate · fail-on never is advisory: exit 1 is a notice by command, exit 2 and 3 warn', () => {
+  const advisory = gate({ check: 0, lint: 0, diff: 1 }, 'never');
+  assert.deepEqual([advisory.errors, advisory.warnings], [[], []]);
+  assert.equal(advisory.notices.length, 1);
+  assert.match(advisory.notices[0], /^plune mcp diff failed \(exit 1\)/);
   const g = gate({ check: 2, lint: 3 }, 'never');
   assert.equal(g.errors.length, 0);
   assert.equal(g.warnings.length, 2);
@@ -201,13 +217,26 @@ test('MCP action · gate · fail-on never is advisory: exit 1 passes, exit 2 and
 
 test('MCP action · comment · joins the CLI reports in run order, or says why there is none', () => {
   const dir = tmp();
-  assert.match(commentBody(dir, 'input error'), /No report was written \(input error\)/);
+  assert.equal(commentBody(dir, 'input error: x'), '### MCP\n\nThis run produced no report: input error: x; see the job log.\n');
   fs.writeFileSync(path.join(dir, 'lint.md'), '<!-- plune-mcp-lint -->\nL\n');
   fs.writeFileSync(path.join(dir, 'check.md'), '<!-- plune-mcp-check -->\nC\n');
   assert.equal(commentBody(dir, 'x'), '<!-- plune-mcp-check -->\nC\n\n<!-- plune-mcp-lint -->\nL\n');
 });
 
-test('MCP action · spawn · arguments reach the program verbatim; nothing in them runs as shell', () => {
+test('MCP action · comment · a body over the limit is cut at a line, with a pointer to the full report', () => {
+  const dir = tmp();
+  const line = `| failed | error | rule | tool | ${'x'.repeat(80)} |\n`;
+  fs.writeFileSync(path.join(dir, 'lint.md'), '<!-- plune-mcp-lint -->\n' + line.repeat(1000));
+  const body = commentBody(dir, 'x', { limit: 60000, artifactName: 'my-reports' });
+  assert.ok(body.length <= 60000, `length ${body.length}`);
+  assert.ok(body.startsWith('<!-- plune-mcp-lint -->\n'));
+  assert.ok(body.endsWith('\n\n… the full report is in the job summary and the `my-reports` artifact\n'));
+  assert.match(body.split('\n').at(-4), /^\| failed .* \|$/, 'the last kept line is whole');
+  // The job summary takes the whole text.
+  assert.equal(commentBody(dir, 'x').length, '<!-- plune-mcp-lint -->\n'.length + line.length * 1000);
+});
+
+test('MCP action · spawn · arguments reach the program verbatim through bash', () => {
   const dir = tmp();
   const out = path.join(dir, 'argv.txt');
   const args = ['check', '--', 'x;', 'touch', path.join(dir, 'pwned'), '$(touch pwned2)', '`id`'];

@@ -31,7 +31,7 @@ inputs:
     required: false
     default: ''
   fail-on:
-    description: 'Lint threshold: error, warn, info or never. never makes the whole action advisory: nothing fails the check, a server that could not be tested or measured gives a warning.'
+    description: 'Lint threshold: error, warn, info or never. never makes the whole action advisory, diff included: nothing fails the check, a failed command gives a notice, a server that could not be tested or measured gives a warning.'
     required: false
     default: 'error'
   ignore-file:
@@ -122,21 +122,26 @@ runs:
       run: node "$GITHUB_ACTION_PATH/../scripts/mcp.mjs" run
 
     # One comment for the MCP reports, apart from the eval-diff comment (its own marker). Best-effort:
-    # an API hiccup or a fork's read-only token does not fail the check.
-    - if: ${{ inputs.comment == 'true' }}
+    # an API hiccup or a fork's read-only token does not fail the check. always(): when the run step
+    # stops on a wrong input, the comment says so instead of keeping an older run's verdict.
+    - if: ${{ always() && inputs.comment == 'true' }}
       uses: actions/github-script@v9
       env:
         ACTION_PATH: ${{ github.action_path }}
         PLUNE_MCP_SUMMARY: ${{ steps.run.outputs.summary }}
+        PLUNE_MCP_ARTIFACT_NAME: ${{ inputs.artifact-name }}
       with:
         script: |
           const path = require('path');
           const { pathToFileURL } = require('url');
           const load = (f) => import(pathToFileURL(path.join(process.env.ACTION_PATH, '..', 'scripts', f)).href);
           try {
-            const { commentBody } = await load('mcp.mjs');
+            const { commentBody, COMMENT_LIMIT } = await load('mcp.mjs');
             const { upsertStickyComment } = await load('upsert-comment.mjs');
-            const body = commentBody(path.join(process.env.RUNNER_TEMP, 'plune-mcp'), process.env.PLUNE_MCP_SUMMARY);
+            const body = commentBody(path.join(process.env.RUNNER_TEMP, 'plune-mcp'), process.env.PLUNE_MCP_SUMMARY || 'the run step did not finish', {
+              limit: COMMENT_LIMIT,
+              artifactName: process.env.PLUNE_MCP_ARTIFACT_NAME,
+            });
             const res = await upsertStickyComment(github, context, body, '<!-- plune-mcp -->');
             core.info('plune mcp comment: ' + res.action + (res.reason ? ' (' + res.reason + ')' : ''));
           } catch (err) {
