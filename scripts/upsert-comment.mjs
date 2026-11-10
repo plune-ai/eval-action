@@ -17,7 +17,8 @@ async function findMarked(github, params, marker) {
   // Every page, not just the first 100: on a busy PR a missed marker would mean a second comment.
   for (let page = 1; ; page++) {
     const { data } = await github.rest.issues.listComments({ ...params, per_page: PER_PAGE, page });
-    const hit = data.find((c) => typeof c.body === 'string' && c.body.includes(marker));
+    // Only a bot's comment: a person who quotes the marker must not have their comment rewritten.
+    const hit = data.find((c) => c.user?.type === 'Bot' && typeof c.body === 'string' && c.body.includes(marker));
     if (hit || data.length < PER_PAGE) return hit;
   }
 }

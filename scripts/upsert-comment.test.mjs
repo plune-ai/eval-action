@@ -22,7 +22,7 @@ function fakeGithub(comments = [], { failWith } = {}) {
         async createComment({ body }) {
           calls.create++;
           fail();
-          const c = { id: nextId++, body };
+          const c = { id: nextId++, body, user: { type: 'Bot' } };
           comments.push(c);
           return { data: c };
         },
@@ -39,7 +39,9 @@ function fakeGithub(comments = [], { failWith } = {}) {
 }
 
 const context = { repo: { owner: 'o', repo: 'r' }, issue: { number: 7 } };
-const filler = (n) => Array.from({ length: n }, (_, i) => ({ id: i + 1, body: `comment ${i + 1}` }));
+const bot = { type: 'Bot' };
+const human = { type: 'User' };
+const filler = (n) => Array.from({ length: n }, (_, i) => ({ id: i + 1, body: `comment ${i + 1}`, user: human }));
 
 test('upsertStickyComment · default marker · creates once, then updates the same comment', async () => {
   const { github, comments } = fakeGithub();
@@ -76,7 +78,7 @@ test('upsertStickyComment · a body without the marker · gets it prepended, so 
 });
 
 test('upsertStickyComment · marker past the first 100 comments · is found by paging', async () => {
-  const { github, comments, calls } = fakeGithub([...filler(150), { id: 9999, body: `${MARKER}\nold` }]);
+  const { github, comments, calls } = fakeGithub([...filler(150), { id: 9999, body: `${MARKER}\nold`, user: bot }]);
   const res = await upsertStickyComment(github, context, `${MARKER}\nnew`);
   assert.deepEqual(res, { action: 'updated', id: 9999 });
   assert.equal(comments.length, 151);
@@ -88,6 +90,22 @@ test('upsertStickyComment · exactly 100 comments, none marked · reads the empt
   assert.equal((await upsertStickyComment(github, context, `${MARKER}\nx`)).action, 'created');
   assert.equal(calls.list, 2);
   assert.equal(comments.length, 101);
+});
+
+test('upsertStickyComment · a person quoting the marker · is left alone; the bot comment after it is updated', async () => {
+  const { github, comments } = fakeGithub([
+    { id: 1, body: `quoting ${MARKER} in a review`, user: human },
+    { id: 2, body: `${MARKER}\nold`, user: bot },
+  ]);
+  assert.deepEqual(await upsertStickyComment(github, context, `${MARKER}\nnew`), { action: 'updated', id: 2 });
+  assert.equal(comments[0].body, `quoting ${MARKER} in a review`);
+});
+
+test('upsertStickyComment · only a person quoting the marker · a new bot comment is created', async () => {
+  const { github, comments } = fakeGithub([{ id: 1, body: `${MARKER}\nby hand`, user: human }]);
+  assert.equal((await upsertStickyComment(github, context, `${MARKER}\nnew`)).action, 'created');
+  assert.equal(comments.length, 2);
+  assert.equal(comments[0].body, `${MARKER}\nby hand`);
 });
 
 for (const status of [401, 403]) {
