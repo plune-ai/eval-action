@@ -69,7 +69,7 @@ inputs:
   plune-version:
     description: 'Version of @plune-ai/cli to install from npm. Pinned for reproducibility; tracks this action release.'
     required: false
-    default: '0.34.5'
+    default: '0.34.6'
 
 outputs:
   lint-exit:
