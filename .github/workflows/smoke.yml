@@ -48,6 +48,19 @@ jobs:
           node-version: '20'
       - run: node --test scripts/*.test.mjs
 
+      # The MCP jobs below are off behind a variable while the pin has no `plune mcp`. Once the pin
+      # moves past that placeholder, a forgotten variable would leave them skipped for good: fail.
+      - name: MCP smoke is on once the pin moves
+        env:
+          MCP_SMOKE_ENABLED: ${{ vars.MCP_SMOKE_ENABLED }}
+        run: |
+          PIN="$(sed -n "/^  plune-version:/,/default:/s/.*default: '\(.*\)'/\1/p" mcp/action.yml)"
+          if [ -z "$PIN" ]; then echo "::error::could not read the default plune-version from mcp/action.yml"; exit 1; fi
+          if [ "$PIN" != 0.34.4 ] && [ "$MCP_SMOKE_ENABLED" != true ]; then
+            echo "::error::MCP smoke is off while the pin is $PIN: set the repository variable MCP_SMOKE_ENABLED to true."
+            exit 1
+          fi
+
   # --- The MCP action (uses: ./mcp) against the fixture server in .github/smoke/mcp/. ---
   #
   # Off until the repository variable MCP_SMOKE_ENABLED is 'true': these jobs need a published CLI
@@ -164,6 +177,32 @@ jobs:
           test "$OUTCOME" = failure
           test "$OUT_MEASURED" = false
           test "$(wc -l < "$RUNNER_TEMP/http.log")" = "$(cat "$RUNNER_TEMP/http.lines")"
+
+  mcp-nostart:
+    name: MCP action, a server command that does not exist is red with exit 2
+    if: ${{ vars.MCP_SMOKE_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: nostart
+        continue-on-error: true
+        uses: ./mcp
+        with:
+          server-command: does-not-exist-xyz
+          comment: 'false'
+          artifact-name: mcp-smoke-nostart
+
+      - name: Red, exit 2, not measured
+        env:
+          OUTCOME: ${{ steps.nostart.outcome }}
+          CHECK_EXIT: ${{ steps.nostart.outputs.check-exit }}
+          OUT_MEASURED: ${{ steps.nostart.outputs.measured }}
+        run: |
+          set -eu
+          test "$OUTCOME" = failure
+          test "$CHECK_EXIT" = 2
+          test "$OUT_MEASURED" = false
 
   mcp-broken:
     name: MCP action, a server that breaks the specification is red (advisory with fail-on never)
