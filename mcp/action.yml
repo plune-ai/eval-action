@@ -67,11 +67,9 @@ inputs:
     required: false
     default: '.'
   plune-version:
-    # Placeholder: the CLI release with `plune mcp` and its report flags is not on npm yet. Raise this
-    # to that release before the first tag of this action, together with the root action's pin.
     description: 'Version of @plune-ai/cli to install from npm. Pinned for reproducibility; tracks this action release.'
     required: false
-    default: '0.34.4'
+    default: '0.34.5'
 
 outputs:
   lint-exit:

@@ -176,7 +176,7 @@ Full workflows: [`examples/mcp-stdio.yml`](./examples/mcp-stdio.yml) (a stdio se
 | `debug-artifact` | `false` | Also upload the frame journal of each command. It can hold what the tools returned, so it is off by default. |
 | `artifact-name` | `plune-mcp-reports` | Name of the reports artifact. Give each use its own name when the action runs more than once in a workflow run (a matrix, two servers), and set `comment: 'false'` on all but one of them. |
 | `working-directory` | `.` | Directory to run in; `server-command`, `ignore-file` and `snapshot-file` are relative to it. |
-| `plune-version` | `0.34.4` | Version of `@plune-ai/cli` to install from npm. |
+| `plune-version` | `0.34.5` | Version of `@plune-ai/cli` to install from npm. |
 
 ### Outputs
 
