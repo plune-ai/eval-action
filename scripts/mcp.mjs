@@ -124,7 +124,30 @@ export function results(exits) {
   };
 }
 
-export function run(env, spawn = (args) => spawnPlune(args)) {
+// The same rule as the CLI's own output: no line of server text may start a workflow command
+// (the runner trims leading white space before `::`, and finds `##[` anywhere in a line).
+const noCommands = (text) => text.replace(/^([\s\u0085]*)::/gm, '$1?::').replaceAll('##[', '##?[');
+
+/**
+ * The last lines the server wrote to stderr, as the command's JSON report recorded them (masked by
+ * the CLI), for the step log: `--format github` does not print them, and a server that exits before
+ * it answers `initialize` is exit 1 with its reason only in the report. Empty when the command
+ * passed, wrote no report, or the server wrote nothing to stderr.
+ */
+export function stderrTail(reportDir, name, status) {
+  if (status === 0) return '';
+  let lines;
+  try {
+    lines = JSON.parse(fs.readFileSync(path.join(reportDir, `${name}.json`), 'utf8')).stderrTail;
+  } catch {
+    return '';
+  }
+  if (!Array.isArray(lines) || lines.length === 0) return '';
+  const tail = lines.map((l) => `  ${noCommands(String(l)).replace(/\r\n?|\n/g, '\n  ')}\n`).join('');
+  return `plune mcp ${name}: the last lines the server wrote to stderr (secrets masked):\n${tail}`;
+}
+
+export function run(env, spawn = (args) => spawnPlune(args), log = (text) => process.stdout.write(text)) {
   let p;
   try {
     p = plan(env);
@@ -144,6 +167,8 @@ export function run(env, spawn = (args) => spawnPlune(args)) {
     // all (npx could not install it, a signal killed it): an npm failure's exit 1 is not a finding.
     const wrote = fs.existsSync(path.join(p.reportDir, `${name}.json`));
     exits[name] = Number.isInteger(status) && (wrote || status === 2) ? status : 2;
+    const tail = stderrTail(p.reportDir, name, exits[name]);
+    if (tail) log(tail);
   }
   return { outputs: { ...results(exits), 'report-dir': p.reportDir } };
 }

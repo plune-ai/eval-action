@@ -192,8 +192,8 @@ Full workflows: [`examples/mcp-stdio.yml`](./examples/mcp-stdio.yml) (a stdio se
 | Exit | Meaning | Default | `fail-on: never` |
 | --- | --- | --- | --- |
 | `0` | Passed, and everything was measured. | green | green |
-| `1` | A finding or a check failed (the annotations and the report name it). | **red** | green, with a notice naming the command |
-| `2` | The server could not be tested: it did not start, could not be reached, refused the credentials, or a flag is wrong. The log has the last lines of its stderr, secrets masked. | **red** | green, with a warning; `measured=false` |
+| `1` | A finding or a check failed (the annotations and the report name it). A server that started and exited before it answered `initialize` is a failed check: the log has the last lines of its stderr, secrets masked. | **red** | green, with a notice naming the command |
+| `2` | The server could not be tested: its command was not found or could not be started, it could not be reached, refused the credentials, or a flag is wrong. The log has the last lines of its stderr, secrets masked. | **red** | green, with a warning; `measured=false` |
 | `3` | Nothing was measured: no tools listed, nothing to compare, a check that could not run. | **red** | green, with a warning; `measured=false` |
 
 A wrong input (both `server-command` and `server-url`, an unknown step, `diff` without

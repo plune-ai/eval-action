@@ -183,6 +183,52 @@ test('MCP action · run · a command that wrote no report (the CLI did not insta
   assert.equal(res.outputs.measured, 'false');
 });
 
+// Stands in for the CLI on a server that exits before it answers initialize: check writes its JSON
+// report with the server's stderr tail (already masked by the CLI) and exits 1.
+const crashed = (code, tail) => (args) => {
+  const json = args.find((a) => a.startsWith('json='));
+  fs.writeFileSync(json.slice('json='.length), JSON.stringify({ kind: 'mcp-check-report', stderrTail: tail, exitCode: code }));
+  return code;
+};
+const logged = (env, spawn) => {
+  let text = '';
+  const res = run(env, spawn, (t) => (text += t));
+  return { res, text };
+};
+
+test('MCP action · run · a server that exits before initialize: its stderr tail from the report is in the step log, as masked', () => {
+  const { res, text } = logged(
+    inputs({ RUNNER_TEMP: tmp(), PLUNE_MCP_STEPS: 'check' }),
+    crashed(1, ['starting with API_TOKEN=***', 'fatal: cannot open the database']),
+  );
+  assert.equal(res.outputs['check-exit'], '1');
+  assert.equal(
+    text,
+    'plune mcp check: the last lines the server wrote to stderr (secrets masked):\n' +
+      '  starting with API_TOKEN=***\n' +
+      '  fatal: cannot open the database\n',
+  );
+});
+
+test('MCP action · run · a stderr tail cannot start a workflow command in the step log', () => {
+  const { text } = logged(
+    inputs({ RUNNER_TEMP: tmp(), PLUNE_MCP_STEPS: 'check' }),
+    crashed(1, ['  ::error::z', 'a ##[set-output name=v;]pass', 'x\n::warning::y', '##[stop-commands]']),
+  );
+  for (const line of text.split('\n')) assert.ok(!line.trimStart().startsWith('::'), line);
+  assert.ok(!text.includes('##['), text);
+  assert.match(text, /\?::error::z/);
+});
+
+test('MCP action · run · a passing command, or a report with no stderr tail, adds nothing to the log', () => {
+  for (const [code, tail] of [[0, ['noise on stderr']], [1, []], [3, []]]) {
+    const { text } = logged(inputs({ RUNNER_TEMP: tmp(), PLUNE_MCP_STEPS: 'check' }), crashed(code, tail));
+    assert.equal(text, '', `exit ${code}`);
+  }
+  // Exit 2 writes no report: the CLI prints the tail to stderr itself.
+  assert.equal(logged(inputs({ RUNNER_TEMP: tmp(), PLUNE_MCP_STEPS: 'check' }), () => 2).text, '');
+});
+
 test('MCP action · results · measured is false on exit 2 or 3, and not run is an empty output', () => {
   assert.deepEqual(results({ check: 0, lint: 1 }), {
     'check-exit': '0', 'lint-exit': '1', 'diff-exit': '',
