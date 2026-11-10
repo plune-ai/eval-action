@@ -172,9 +172,9 @@ Full workflows: [`examples/mcp-stdio.yml`](./examples/mcp-stdio.yml) (a stdio se
 | `snapshot-file` | | Committed snapshot (`plune mcp snapshot`) that `diff` compares the server with. Required when `steps` has `diff`. |
 | `diff-fail-on` | `breaking` | Diff threshold: `breaking`, `any` or `none`. |
 | `smoke` | `false` | `true` adds `--smoke` to `check`: each tool that says it is read-only and takes no argument is called once. |
-| `comment` | `true` | Post and update one PR comment. |
+| `comment` | `true` | Post and update one PR comment. All uses of the action in one PR share that comment: on a second use, set `comment: 'false'`. |
 | `debug-artifact` | `false` | Also upload the frame journal of each command. It can hold what the tools returned, so it is off by default. |
-| `artifact-name` | `plune-mcp-reports` | Name of the reports artifact. Give each use its own name when the action runs more than once in a workflow run (a matrix, two servers). |
+| `artifact-name` | `plune-mcp-reports` | Name of the reports artifact. Give each use its own name when the action runs more than once in a workflow run (a matrix, two servers), and set `comment: 'false'` on all but one of them. |
 | `working-directory` | `.` | Directory to run in; `server-command`, `ignore-file` and `snapshot-file` are relative to it. |
 | `plune-version` | `0.34.4` | Version of `@plune-ai/cli` to install from npm. |
 
@@ -192,13 +192,18 @@ Full workflows: [`examples/mcp-stdio.yml`](./examples/mcp-stdio.yml) (a stdio se
 | Exit | Meaning | Default | `fail-on: never` |
 | --- | --- | --- | --- |
 | `0` | Passed, and everything was measured. | green | green |
-| `1` | A finding or a check failed (the annotations and the report name it). | **red** | green |
+| `1` | A finding or a check failed (the annotations and the report name it). | **red** | green, with a notice naming the command |
 | `2` | The server could not be tested: it did not start, could not be reached, refused the credentials, or a flag is wrong. The log has the last lines of its stderr, secrets masked. | **red** | green, with a warning; `measured=false` |
 | `3` | Nothing was measured: no tools listed, nothing to compare, a check that could not run. | **red** | green, with a warning; `measured=false` |
 
 A wrong input (both `server-command` and `server-url`, an unknown step, `diff` without
 `snapshot-file`, an empty `headers-from-env` variable) stops the action with an error before
 anything starts, whatever `fail-on` says.
+
+`fail-on: never` makes every command of that use advisory, `diff` included: `diff-fail-on` still
+decides what the report calls a failure, but the check stays green. For an advisory lint with a
+blocking diff, use the action twice: one step with `steps: lint` and `fail-on: never`, one with
+`steps: diff`, each with its own `artifact-name`, and `comment: 'false'` on one of them.
 
 ### Permissions
 
@@ -211,10 +216,19 @@ The action reads no secret itself. A header value goes from your secret to an `e
 step, and the CLI reads it from there: it is never on a command line, and the reports mask it
 wherever the server repeats it.
 
-A pull request from a fork gets no secrets. When a variable named in `headers-from-env` is empty or
-unset, the action stops with an error that names the variable, before it starts or contacts the
-server. For forks, run a separate job without secrets against a server that needs none; see
-[`examples/mcp-http.yml`](./examples/mcp-http.yml). On a fork the comment is skipped (the token is
+Keep the whole header value in the secret (`Bearer <token>`) and pass it as is:
+`MCP_AUTHORIZATION: ${{ secrets.MCP_AUTHORIZATION }}`. Written as `Bearer ${{ secrets.TOKEN }}`, a
+missing secret would leave the variable at `Bearer `; the action treats a value that is only
+`Bearer`, `Basic` or `Token` as empty too, but the plain form says what it means.
+
+A pull request from a fork gets no secrets, and neither does one opened by Dependabot: its runs get
+Dependabot secrets only, not Actions secrets
+([GitHub docs](https://docs.github.com/en/code-security/dependabot/troubleshooting-dependabot/troubleshooting-dependabot-on-github-actions)).
+When a variable named in `headers-from-env` is empty or unset, the action stops with an error that
+names the variable, before it starts or contacts the server. For both, run a separate job without
+secrets against a server that needs none, and keep the job with secrets to
+`github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'`;
+see [`examples/mcp-http.yml`](./examples/mcp-http.yml). On a fork the comment is skipped (the token is
 read-only); the annotations, summary, artifacts and gate still work. The action never uses
 `pull_request_target`.
 

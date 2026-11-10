@@ -6,9 +6,10 @@
 # secret through the env of the action's step, by variable name: the value is never on a command
 # line, and the action reads no secret itself.
 #
-# Pull requests from forks get no secrets, and the action stops with an error naming the empty
-# variable before it contacts the server. So the job with the secret skips fork PRs; the second job
-# shows the fork recipe: no secret, the server started without auth.
+# Pull requests from forks get no secrets, nor do Dependabot's (they get Dependabot secrets only),
+# and the action stops with an error naming the empty variable before it contacts the server. So
+# the job with the secret skips both; the second job shows the recipe for them: no secret, the
+# server started without auth.
 
 name: MCP server
 
@@ -22,7 +23,7 @@ permissions:
 
 jobs:
   mcp:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,11 +46,13 @@ jobs:
           wait: 30s
           headers-from-env: Authorization=MCP_AUTHORIZATION
         env:
-          MCP_AUTHORIZATION: Bearer ${{ secrets.MCP_AUTH_TOKEN }}
+          # The secret holds the whole header value ("Bearer <token>"): without it the variable is
+          # empty, where "Bearer " in front of a missing secret would still look set.
+          MCP_AUTHORIZATION: ${{ secrets.MCP_AUTHORIZATION }}
 
-  # Fork PRs: no secret, so test a server that needs none (here the same server with auth off).
+  # Fork and Dependabot PRs: no secret, so test a server that needs none (here auth off).
   mcp-fork:
-    if: github.event.pull_request.head.repo.full_name != github.repository
+    if: github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
