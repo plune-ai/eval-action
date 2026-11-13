@@ -7,8 +7,17 @@ const NOTE = /^_\d+ more lines? in the job summary_$/;
 // A body of `n` lines of `w` characters each, under the marker.
 const body = (n, w = 99) => [MARKER, ...Array.from({ length: n }, (_, i) => `row ${i}`.padEnd(w, '.'))].join('\n');
 
-test('comment size · the budget is 60,000, under the 65,536 of the tracker issue (not confirmed by documentation)', () => {
+test('comment size · the budget is 60,000, under the commonly cited 65,536 (not confirmed by documentation)', () => {
   assert.equal(COMMENT_BUDGET, 60_000);
+});
+
+test('comment size · a marker sharing its line with a huge text still gives a body within the budget, marker first', () => {
+  const text = MARKER + 'x'.repeat(70_000) + '\nlast';
+  const out = fitComment(text, MARKER);
+  assert.ok(out.length <= COMMENT_BUDGET, `length ${out.length}`);
+  const lines = out.split('\n');
+  assert.equal(lines[0], MARKER);
+  assert.match(lines.at(-1), NOTE);
 });
 
 test('comment size · a body exactly at the budget is left alone', () => {

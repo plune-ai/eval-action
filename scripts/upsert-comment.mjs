@@ -28,6 +28,8 @@ const moreNote = (n) => `_${n} more ${n === 1 ? 'line' : 'lines'} in the job sum
 export function fitComment(text, marker = MARKER) {
   if (text.length <= COMMENT_BUDGET) return text;
   const lines = text.split('\n');
+  // A marker that shares its line with other text gets a line of its own, so only the marker is exempt from the cut.
+  if (lines[0].includes(marker) && lines[0] !== marker) lines.splice(0, 1, marker, lines[0].replace(marker, ''));
   const kept = lines[0].includes(marker) ? [] : [marker];
   let used = kept.length > 0 ? marker.length : 0;
   let i = 0;
@@ -38,7 +40,7 @@ export function fitComment(text, marker = MARKER) {
     kept.push(lines[i]);
     used += add;
   }
-  // The marker line is kept whatever its length; a later line that overflows ends the text.
+  // The first line is the bare marker; a later line that overflows ends the text.
   return [...kept, moreNote(lines.length - i)].join('\n');
 }
 
