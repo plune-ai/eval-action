@@ -29,6 +29,26 @@ inputs:
     description: 'Fail the check when a pass→fail regression is detected, or when an eval could not be measured (its run errored). Off by default — the diff is always commented.'
     required: false
     default: 'false'
+  max-pass-rate-drop-percent:
+    description: 'Gate: fail the check when the overall pass rate drops by more than this many percentage points. Off when empty. Needs a plune-version with the diff gates.'
+    required: false
+    default: ''
+  max-cost-usd:
+    description: 'Gate: fail the check when the PR run costs more than this many USD. Off when empty. Needs a plune-version with the diff gates.'
+    required: false
+    default: ''
+  max-cost-increase-percent:
+    description: 'Gate: fail the check when the PR run costs more than this many percent over the baseline. Off when empty. Needs a plune-version with the diff gates.'
+    required: false
+    default: ''
+  max-tokens:
+    description: 'Gate: fail the check when the PR run uses more than this many tokens (input plus output). Off when empty. Needs a plune-version with the diff gates.'
+    required: false
+    default: ''
+  waivers:
+    description: 'Path to a waivers YAML file for measured gate failures (relative to working-directory). Off when empty. Needs a plune-version with the diff gates.'
+    required: false
+    default: ''
   comment:
     description: 'Post (and update in place) a sticky PR comment with the diff.'
     required: false
@@ -52,6 +72,9 @@ outputs:
   summary:
     description: 'One-line diff summary.'
     value: ${{ steps.diff.outputs.summary }}
+  gate-exit-code:
+    description: 'Exit code of plune diff with fail-on-regression or a gate input set: 0 passed, 1 a measured failure, 2 an input error, 3 not measured. Empty when none is set, or when the base ref has no baseline yet.'
+    value: ${{ steps.diff.outputs.gate-exit-code }}
 
 runs:
   using: 'composite'
@@ -119,26 +142,32 @@ runs:
         fi
 
     # Pure diff (ADR-GA03): markdown for the comment body, json to drive the outputs + gate.
+    # The gate inputs go to the CLI as flags, each only when set (scripts/diff-gates.mjs): a CLI older
+    # than the gates exits 1 on a flag it does not know. With none set, the commands are as before.
     - id: diff
       shell: bash
+      # So a relative `waivers` path reads like `config`; the run files are absolute paths.
+      working-directory: ${{ inputs.working-directory }}
       env:
         PLUNE_VERSION: ${{ inputs.plune-version }}
         HAS_BASELINE: ${{ steps.run-baseline.outputs.baseline }}
+        PLUNE_FAIL_ON_REGRESSION: ${{ inputs.fail-on-regression }}
+        PLUNE_MAX_PASS_RATE_DROP_PERCENT: ${{ inputs.max-pass-rate-drop-percent }}
+        PLUNE_MAX_COST_USD: ${{ inputs.max-cost-usd }}
+        PLUNE_MAX_COST_INCREASE_PERCENT: ${{ inputs.max-cost-increase-percent }}
+        PLUNE_MAX_TOKENS: ${{ inputs.max-tokens }}
+        PLUNE_WAIVERS: ${{ inputs.waivers }}
       run: |
         # No baseline on the base ref (first eval PR): nothing to diff — emit a friendly note and clean
-        # outputs instead of crashing on a missing plune-baseline.json (ENOENT).
+        # outputs instead of crashing on a missing plune-baseline.json (ENOENT). No gate either: green.
         if [ "$HAS_BASELINE" != "true" ]; then
           echo "_No Plune baseline on the base ref yet — nothing to diff. This is expected on the first PR that introduces evals._" > "$RUNNER_TEMP/plune-diff.md"
-          printf 'has-regression=false\nregressions=0\nunmeasured=0\nsummary=no baseline yet\n' >> "$GITHUB_OUTPUT"
+          printf 'has-regression=false\nregressions=0\nunmeasured=0\nsummary=no baseline yet\ngate-exit-code=\n' >> "$GITHUB_OUTPUT"
           exit 0
         fi
-        npx -y "@plune-ai/cli@$PLUNE_VERSION" diff "$RUNNER_TEMP/plune-baseline.json" "$RUNNER_TEMP/plune-current.json" --format markdown -o "$RUNNER_TEMP/plune-diff.md"
-        npx -y "@plune-ai/cli@$PLUNE_VERSION" diff "$RUNNER_TEMP/plune-baseline.json" "$RUNNER_TEMP/plune-current.json" --format json -o "$RUNNER_TEMP/plune-diff.json"
-        if [ ! -s "$RUNNER_TEMP/plune-diff.json" ]; then
-          echo "::error::plune diff produced no JSON output ($RUNNER_TEMP/plune-diff.json). Temp dir:"
-          ls -la "$RUNNER_TEMP" || true
-          exit 1
-        fi
+        # Markdown for the comment, JSON for the outputs. Writes gate-exit-code, and fails here only when
+        # the CLI wrote no JSON at all (an input error, a flag the pinned CLI does not know).
+        node "$GITHUB_ACTION_PATH/scripts/diff-gates.mjs" diff
         node -e '
           const fs = require("fs");
           const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/plune-diff.json", "utf8")).summary;
@@ -190,22 +219,13 @@ runs:
           fi
         } >> "$GITHUB_STEP_SUMMARY"
 
-    # Opt-in gate (AC-4): a quality regression fails the check (→ branch protection) only when asked.
-    - name: Gate on regression
-      if: ${{ inputs.fail-on-regression == 'true' && steps.diff.outputs.has-regression == 'true' }}
-      shell: bash
-      run: |
-        echo "::error::Plune detected a quality regression (pass→fail) on this PR."
-        exit 1
-
-    # An eval whose run errored was not checked at all, so "no regressions" would be a guess. It is
-    # not a regression either: the message says so and points at a re-run. A regression, when there
-    # is one, is reported by the step above instead.
-    - name: Gate on an unmeasured run
-      if: ${{ inputs.fail-on-regression == 'true' && steps.diff.outputs.has-regression != 'true' && steps.diff.outputs.unmeasured != '' && steps.diff.outputs.unmeasured != '0' }}
+    # Opt-in gate (AC-4): with fail-on-regression or a gate input set, a non-zero exit of the diff fails
+    # the check (→ branch protection), with its own message for 1 (a measured failure), 2 (an input
+    # error) and 3 (not measured: not a regression, and not a pass either). It runs after the comment,
+    # so the «Gates» section is posted either way.
+    - name: Gate
+      if: ${{ steps.diff.outputs.gate-exit-code != '' && steps.diff.outputs.gate-exit-code != '0' }}
       shell: bash
       env:
-        UNMEASURED: ${{ steps.diff.outputs.unmeasured }}
-      run: |
-        echo "::error::Plune could not measure $UNMEASURED eval(s) on this PR: their run errored. This is not a regression. If the provider did not answer, re-run the job; if the same eval errors every time (for example an llm-judge on the mock provider), the eval itself needs fixing - the run summary names the error."
-        exit 1
+        PLUNE_GATE_EXIT_CODE: ${{ steps.diff.outputs.gate-exit-code }}
+      run: node "$GITHUB_ACTION_PATH/scripts/diff-gates.mjs" gate
