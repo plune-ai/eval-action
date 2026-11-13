@@ -13,8 +13,8 @@ export const MARKER = '<!-- plune-eval-diff -->';
 
 const PER_PAGE = 100;
 
-// How long the comment may be, in characters. GitHub rejects a comment body over a limit that the tracker issue
-// gives as 65,536; that figure is not confirmed by documentation (GitHub's REST reference for issue comments
+// How long the comment may be, in characters. GitHub rejects a comment body over a limit commonly
+// cited as 65,536; that figure is not confirmed by documentation (GitHub's REST reference for issue comments
 // states none), so the budget stays well below it. The CLI keeps its own diff within the same 60,000.
 export const COMMENT_BUDGET = 60_000;
 
