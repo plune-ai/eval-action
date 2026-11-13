@@ -65,7 +65,7 @@ branch does not turn the check red.
 
 An eval that was not measured is not a regression, but it was not checked either, so "no
 regressions" would be a guess. With `fail-on-regression: true` the check fails with its own message
-(`Plune could not measure N eval(s)…`). A provider that did not answer is cleared by re-running the
+(`Something the gates need was not measured…`, exit `3`). A provider that did not answer is cleared by re-running the
 job; an eval that errors every time (for example an `llm-judge` assertion on the mock provider,
 which has no judge to ask) keeps the check red until the eval is fixed — the run summary names its
 error. The `has-regression`
@@ -81,6 +81,11 @@ output stays `false` in that case, and the `unmeasured` output carries the count
 | `base-ref` | `main` | Baseline git ref to compare against. |
 | `use-mock` | `true` | Run on the built-in mock provider (no key, zero cost). Set `false` to use a real provider. |
 | `fail-on-regression` | `false` | Fail the check (block merge) when a regression is detected, or when an eval could not be measured. |
+| `max-pass-rate-drop-percent` | | [Gate](#gates): fail when the overall pass rate drops by more than this many percentage points. |
+| `max-cost-usd` | | [Gate](#gates): fail when the PR run costs more than this many USD. |
+| `max-cost-increase-percent` | | [Gate](#gates): fail when the PR run costs more than this many percent over the baseline. |
+| `max-tokens` | | [Gate](#gates): fail when the PR run uses more than this many tokens (input plus output). |
+| `waivers` | | Path to a [waivers](#waivers) file (relative to `working-directory`). |
 | `comment` | `true` | Post and update a sticky PR comment with the diff. |
 | `plune-version` | `0.36.0` | Version of `@plune-ai/cli` to install from npm. |
 
@@ -92,6 +97,66 @@ output stays `false` in that case, and the `unmeasured` output carries the count
 | `regressions` | Number of regressions. |
 | `unmeasured` | Number of evals that could not be measured (their run errored); `0` when everything was measured. |
 | `summary` | One-line diff summary. |
+| `gate-exit-code` | Exit code of `plune diff` with `fail-on-regression` or a gate input set: `0`, `1`, `2` or `3` (see [Gates](#gates)). Empty when none is set, or when the base ref has no baseline yet. |
+
+## Gates
+
+`fail-on-regression` and the four limits above are gates of `plune diff`. Each is off until its input
+is set, and the action passes a flag to the CLI only for an input you set; with none set, the action
+runs exactly as before. The comparison is the CLI's: the action passes the inputs on and acts on the
+exit code. The gate limits and `waivers` need a `plune-version` with the diff gates (the release after
+`0.37.0`); an older one stops with `@plune-ai/cli <version> does not know the flag …`.
+
+```yaml
+      - uses: plune-ai/eval-action@v1
+        with:
+          fail-on-regression: 'true'
+          max-pass-rate-drop-percent: '5'
+          max-cost-increase-percent: '20'
+          waivers: .plune/waivers.yaml
+```
+
+The diff comment and the job summary have a «Gates» section with each gate's state:
+
+| State | Meaning |
+| --- | --- |
+| `passed` | Measured, and within its limit. |
+| `failed` | Measured, and over its limit (or an eval went from passed to failed). |
+| `unmeasured` | Its value is missing, so there is no verdict: an eval errored, the mock provider wrote no price for a cost gate, or the two runs did not measure the same evals for the pass rate. Not a pass. |
+| `waived` | Measured and failed, but a waiver that has not expired lifts it. |
+
+With any gate set, the check follows the diff's exit code, also in the `gate-exit-code` output:
+
+| Exit | Meaning | Check |
+| --- | --- | --- |
+| `0` | Every gate was measured and none failed (a waived failure does not count). | green |
+| `1` | A measured failure: a regression, or a gate over its limit. It wins over `3`. | **red**, `a measured failure` |
+| `2` | An input error: a limit is not a number of 0 or more, the waivers file is missing or malformed, or a run result could not be read. | **red**, `an input error` |
+| `3` | Something was not measured. Not a regression; re-run the job if the provider did not answer, or record what is missing. | **red**, `not measured` |
+
+On the first PR that adds evals the base ref has no baseline: there is nothing to diff, no gate runs,
+and the check stays green. `has-regression`, `regressions` and `unmeasured` keep their meaning.
+
+The cost gates read a price per row; the mock provider (`use-mock: 'true'`, the default) writes none,
+so a cost gate on it is `unmeasured` (exit `3`). Use them with a real provider.
+
+### Waivers
+
+A waiver lifts a measured failure for a while; it never lifts `unmeasured` or an input error. The file
+lives in your repository, so each waiver is reviewed in a pull request (a pull request can add one in
+the same change, visible in its diff and in the comment):
+
+```yaml
+waivers:
+  - gate: regression          # regression | pass-rate | cost | tokens
+    eval: checkout-flow       # required for regression only
+    reason: "Upstream search is down, fix tracked upstream"   # required, at most 200 characters
+    granted: "2026-11-13"
+    expires: "2026-11-30"     # at most 30 days after granted
+```
+
+The format and the rules are in the CLI's
+[`plune diff` guide](https://github.com/plune-ai/cli/blob/main/docs/guide/cli.md).
 
 ## Run summary
 

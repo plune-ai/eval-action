@@ -9,6 +9,7 @@ own** — only the orchestration in `action.yml` and a small sticky-comment help
 - `action.yml` — the composite steps and the input/output contract.
 - `mcp/action.yml` — the MCP action (`plune-ai/eval-action/mcp@v1`), with its own contract.
 - `scripts/upsert-comment.mjs` — posts and updates the sticky PR comment.
+- `scripts/diff-gates.mjs` — passes the gate inputs on to `plune diff` and names its exit code.
 - `scripts/mcp.mjs` — turns the MCP action's inputs into `plune mcp` arguments and judges the exit codes.
 - `scripts/*.test.mjs` — their tests: `node --test scripts/*.test.mjs`, no dependencies.
 - `examples/` — copy-paste consumer workflows.
