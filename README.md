@@ -104,8 +104,8 @@ output stays `false` in that case, and the `unmeasured` output carries the count
 `fail-on-regression` and the four limits above are gates of `plune diff`. Each is off until its input
 is set, and the action passes a flag to the CLI only for an input you set; with none set, the action
 runs exactly as before. The comparison is the CLI's: the action passes the inputs on and acts on the
-exit code. The gate limits and `waivers` need a `plune-version` with the diff gates (the release after
-`0.37.0`); an older one stops with `@plune-ai/cli <version> does not know the flag …`.
+exit code. The gate limits and `waivers` need a `plune-version` with the diff gates: `0.38.0` and newer, which the default
+`plune-version` is; an older one stops with `@plune-ai/cli <version> does not know the flag …`.
 
 ```yaml
       - uses: plune-ai/eval-action@v1
