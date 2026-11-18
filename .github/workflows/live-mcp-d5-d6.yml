@@ -1,0 +1,107 @@
+name: Live check (temporary)
+
+# Temporary, on the branch of a draft PR only: live runs of this action for plune-ai/plune#2445 and
+# plune-ai/plune#2446. Mock provider, no secrets, no cost. Removed with the branch.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  waiver-valid:
+    name: D5 regression gate with a valid waiver is green
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: eval
+        uses: ./
+        with:
+          config: plune.yaml
+          working-directory: .github/smoke
+          base-ref: main
+          fail-on-regression: 'true'
+          waivers: waiver-valid.yaml
+          comment: 'false'
+      - env:
+          GATE: ${{ steps.eval.outputs.gate-exit-code }}
+          REGRESSIONS: ${{ steps.eval.outputs.regressions }}
+          OUTCOME: ${{ steps.eval.outcome }}
+        run: |
+          set -eu
+          echo "outcome=$OUTCOME gate-exit-code=$GATE regressions=$REGRESSIONS"
+          test "$OUTCOME" = success
+          test "$GATE" = 0
+          test "$REGRESSIONS" = 1
+
+  waiver-expired:
+    name: D5 regression gate with an expired waiver is red, exit 1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: eval
+        continue-on-error: true
+        uses: ./
+        with:
+          config: plune.yaml
+          working-directory: .github/smoke
+          base-ref: main
+          fail-on-regression: 'true'
+          waivers: waiver-expired.yaml
+          comment: 'false'
+      - env:
+          GATE: ${{ steps.eval.outputs.gate-exit-code }}
+          OUTCOME: ${{ steps.eval.outcome }}
+        run: |
+          set -eu
+          echo "outcome=$OUTCOME gate-exit-code=$GATE"
+          test "$OUTCOME" = failure
+          test "$GATE" = 1
+
+  cost-unmeasured:
+    name: D5 cost gate on the mock provider is red, exit 3 (not measured)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: eval
+        continue-on-error: true
+        uses: ./
+        with:
+          config: plune.yaml
+          working-directory: .github/live
+          base-ref: ${{ github.head_ref }}
+          max-cost-usd: '1'
+          comment: 'false'
+      - env:
+          GATE: ${{ steps.eval.outputs.gate-exit-code }}
+          OUTCOME: ${{ steps.eval.outcome }}
+        run: |
+          set -eu
+          echo "outcome=$OUTCOME gate-exit-code=$GATE"
+          test "$OUTCOME" = failure
+          test "$GATE" = 3
+
+  matrix-comment:
+    name: D6 model matrix, one sticky comment updated in place
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: eval
+        uses: ./
+        with:
+          config: plune.yaml
+          working-directory: .github/live
+          base-ref: ${{ github.head_ref }}
+          comment: 'true'

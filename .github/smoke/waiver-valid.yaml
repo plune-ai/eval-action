@@ -1,0 +1,6 @@
+waivers:
+  - gate: regression
+    eval: smoke
+    reason: "Temporary live check of plune-ai/plune#2445: a valid waiver"
+    granted: "2026-11-18"
+    expires: "2026-11-30"

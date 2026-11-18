@@ -17,4 +17,4 @@ evals:
         - vars: {}
     assertions:
       - type: contains
-        value: mock
+        value: live-temp-not-in-mock-reply

@@ -1,0 +1,25 @@
+# Temporary fixture for a live check of plune-ai/plune#2446 (model matrix, one sticky comment). Mock provider, no cost.
+version: 1
+provider:
+  - type: openrouter
+    model: qwen/qwen3.7-flash
+  - type: openrouter
+    model: z-ai/glm-5.3-flash
+runs: 3
+evals:
+  - id: greet
+    prompt: "Reply with the single word: hello"
+    dataset:
+      examples:
+        - vars: {}
+    assertions:
+      - type: contains
+        value: mock
+  - id: echo
+    prompt: "Repeat: ok"
+    dataset:
+      examples:
+        - vars: {}
+    assertions:
+      - type: contains
+        value: response
